@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; media-src 'self' file:; style-src 'self' 'unsafe-inline';" />
+  <title>Post ADR Pro — Actor Booth</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #000; color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+      -webkit-app-region: drag;
+    }
+
+    /* ── Root ─────────────────────────────────────────────────────────────── */
+    .booth-root {
+      width: 100%; height: 100%;
+      position: relative;
+      background: #000;
+    }
+
+    /* ── Video layer ──────────────────────────────────────────────────────── */
+    .booth-video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      background: #000;
+      display: none;
+      pointer-events: none;
+    }
+    .booth-video.has-source { display: block; }
+
+    /* ── Idle overlay ─────────────────────────────────────────────────────── */
+    .idle {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px;
+      background: #000;
+      transition: opacity 0.3s;
+    }
+    .idle.hidden { opacity: 0; pointer-events: none; }
+
+    .idle-brand {
+      font-size: 28px; font-weight: 700; letter-spacing: 0.14em;
+      text-transform: uppercase; color: rgba(204, 34, 34, 0.75);
+    }
+    .idle-waiting {
+      font-size: 16px; letter-spacing: 0.07em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.22);
+    }
+
+    /* ── Countdown dots ───────────────────────────────────────────────────── */
+    /* Three large dots shown during cue pre-roll. Hidden at all other times. */
+    .countdown-dots {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: none;                /* hidden by default                     */
+      align-items: center;
+      justify-content: center;
+      gap: 36px;
+      background: rgba(0, 0, 0, 0.72);  /* dim backdrop during countdown    */
+      pointer-events: none;
+      z-index: 20;
+    }
+    .countdown-dots.visible { display: flex; }
+
+    .cdot {
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.15);
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      transition: background 0.06s, border-color 0.06s, box-shadow 0.06s;
+    }
+    .cdot.lit {
+      background: #ffffff;
+      border-color: #ffffff;
+      box-shadow: 0 0 24px rgba(255, 255, 255, 0.75);
+    }
+
+    /* ── Character name badge ─────────────────────────────────────────────── */
+    .char-badge {
+      position: absolute;
+      top: 18px; left: 50%; transform: translateX(-50%);
+      font-size: 12px; font-weight: 600; letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.30);
+      display: none;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .char-badge.visible { display: block; }
+
+    /* ── Dialogue overlay ─────────────────────────────────────────────────── */
+    .dialogue-overlay {
+      position: absolute;
+      bottom: 12%;
+      left: 50%; transform: translateX(-50%);
+      max-width: 80%;
+      text-align: center;
+      padding: 10px 20px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.50);
+      line-height: 1.45;
+      word-wrap: break-word;
+      display: none;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .dialogue-overlay.visible { display: block; }
+
+    .dialogue-overlay.size-small  { font-size: 20px; }
+    .dialogue-overlay.size-medium { font-size: 30px; }
+    .dialogue-overlay.size-large  { font-size: 44px; }
+
+    .timecode-overlay {
+      position: absolute;
+      top: 18px;
+      right: 22px;
+      display: none;
+      padding: 5px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 3px;
+      background: rgba(0, 0, 0, 0.42);
+      color: rgba(255, 255, 255, 0.82);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 18px;
+      letter-spacing: 0.04em;
+      pointer-events: none;
+      z-index: 12;
+    }
+    .timecode-overlay.visible { display: block; }
+
+    /* ── Status strip ─────────────────────────────────────────────────────── */
+    .status-strip {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.03);
+      pointer-events: none;
+      z-index: 5;
+    }
+  </style>
+</head>
+<body>
+  <div class="booth-root">
+
+    <!-- Video — display only, no controls, non-interactive, muted for autoplay -->
+    <video id="booth-video" class="booth-video"
+           preload="none"
+           muted
+           disablePictureInPicture
+           tabindex="-1">
+    </video>
+
+    <!-- Idle overlay -->
+    <div class="idle" id="idle">
+      <div class="idle-brand">POST ADR PRO</div>
+      <div class="idle-waiting">Waiting for cue…</div>
+    </div>
+
+    <!-- Countdown dots — shown only during cue pre-roll -->
+    <div class="countdown-dots" id="countdown-dots">
+      <div class="cdot" id="cdot-1"></div>
+      <div class="cdot" id="cdot-2"></div>
+      <div class="cdot" id="cdot-3"></div>
+    </div>
+
+    <!-- Character name badge -->
+    <div class="char-badge" id="char-badge"></div>
+
+    <!-- Dialogue overlay -->
+    <div class="dialogue-overlay size-medium" id="dialogue-overlay"></div>
+
+    <!-- Optional timecode overlay -->
+    <div class="timecode-overlay" id="timecode-overlay">00:00:00:00</div>
+
+    <!-- Status strip -->
+    <div class="status-strip" id="booth-status-strip">Actor Booth Display — Post ADR Pro</div>
+
+  </div>
+  <script src="booth.js"></script>
+</body>
+</html>

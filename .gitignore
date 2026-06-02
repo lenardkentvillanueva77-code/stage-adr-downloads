@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Electron / package outputs
+dist/
+out/
+release/
+*.asar
+
+# Native build outputs
+native/audio-engine/JUCE/
+native/audio-engine/build/
+native/audio-engine/build-clean/
+native/audio-engine/build-msvc/
+native/audio-engine/build-nmake/
+native/audio-engine/build-nmake2/
+native/audio-engine/build-vs/
+native/audio-engine/**/CMakeFiles/
+native/audio-engine/**/CMakeCache.txt
+native/audio-engine/**/*.obj
+native/audio-engine/**/*.pdb
+native/audio-engine/**/*.ilk
+native/audio-engine/**/*.exe
+
+# Generated media / project session payloads
+*.stageadr
+*.stageadr.bak
+*.wav
+*.mp3
+*.mp4
+*.mov
+*.mxf
+Media/
+Exports/
+
+# Logs and local state
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Editor / local environment
+.vscode/
+.idea/
+.env
+.env.*

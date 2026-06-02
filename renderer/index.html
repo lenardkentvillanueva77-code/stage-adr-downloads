@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; media-src 'self' file:; style-src 'self' 'unsafe-inline';" />
+  <title>Post ADR Pro</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ── Top Header ─────────────────────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="header-left">
+      <span class="app-logo">
+        <span class="logo-post">POST ADR</span><span class="logo-pro"> PRO</span>
+      </span>
+    </div>
+    <div class="header-center">
+      <span class="project-label" id="header-project-name">No Project Open</span>
+    </div>
+    <div class="header-right">
+      <button class="btn btn-toolbar btn-icon btn-icon-wide hidden" id="btn-new-project" title="New ADR Session" aria-label="New ADR Session">ADR+</button>
+      <button class="btn btn-toolbar btn-icon hidden" id="btn-open-project" title="Open Project" aria-label="Open Project">&#128193;</button>
+      <button class="btn btn-toolbar btn-icon btn-primary hidden" id="btn-save-project" disabled title="Save Project" aria-label="Save Project">&#128190;</button>
+      <button class="btn btn-toolbar btn-icon hidden" id="btn-load-video" disabled title="Load Video" aria-label="Load Video">&#127909;</button>
+      <button class="btn btn-toolbar btn-icon btn-booth" id="btn-open-booth" title="Open Booth Display" aria-label="Open Booth Display">Booth</button>
+    </div>
+  </header>
+
+  <!-- ── Status Bar ─────────────────────────────────────────────────────────── -->
+  <div class="status-bar">
+    <span class="status-icon" id="status-icon">●</span>
+    <span class="status-message" id="status-message">Ready. Create or open a project to begin.</span>
+    <span class="waveform-progress hidden" id="waveform-progress-area">
+      <span class="progress-label" id="waveform-progress-label">Extracting audio…</span>
+      <span class="progress-bar-wrap">
+        <span class="progress-bar-fill" id="waveform-progress-fill" style="width:0%"></span>
+      </span>
+      <span class="progress-pct" id="waveform-progress-pct">0%</span>
+    </span>
+  </div>
+
+  <!-- ── Main Content Area ──────────────────────────────────────────────────── -->
+  <div class="audio-console-strip" id="audio-console-strip" aria-label="Audio I/O">
+    <div class="audio-console-heading audio-console-heading-outputs">OUTPUTS</div>
+    <div class="audio-console-heading audio-console-heading-inputs">INPUTS</div>
+    <div class="audio-console-heading audio-console-heading-meters">METERS</div>
+    <div class="audio-console-heading audio-console-heading-display">DISPLAY</div>
+      <div class="audio-console-row audio-console-row-top">
+        <div class="audio-console-group audio-console-device" id="audio-console-device-slot"></div>
+        <div class="audio-console-group audio-console-buffer" id="audio-console-buffer-slot"></div>
+      <div class="audio-console-group audio-console-mics" id="audio-console-mics-slot">
+        <div class="audio-console-mic-lane" id="audio-console-mic1-slot"></div>
+        <div class="audio-console-mic-lane" id="audio-console-mic2-slot"></div>
+      </div>
+      <div class="audio-console-group audio-console-talkback" id="audio-console-talkback-slot"></div>
+      <div class="audio-console-group audio-console-meter1" id="audio-console-meter1-slot"></div>
+      <div class="audio-console-group audio-console-display" id="audio-console-display-slot"></div>
+    </div>
+    <div class="audio-console-row audio-console-row-bottom">
+      <div class="audio-console-group audio-console-routing" id="audio-console-routing-slot"></div>
+      <div class="audio-console-group audio-console-meter2" id="audio-console-meter2-slot"></div>
+      <div class="audio-console-group audio-console-status" id="audio-console-status-slot"></div>
+    </div>
+  </div>
+
+  <main class="main-content info-sidebar-collapsed">
+
+    <!-- ── Left column: Video + Timeline ───────────────────────────────────── -->
+    <section class="video-section">
+      <!-- Video player + overlay -->
+      <div class="video-container" id="video-container">
+        <div class="video-placeholder" id="video-placeholder">
+          <div class="placeholder-icon">▶</div>
+          <p class="placeholder-title">No Video Loaded</p>
+          <p class="placeholder-sub">Load a video file to begin spotting cues.</p>
+        </div>
+        <video id="video-player" class="video-player hidden" preload="metadata" tabindex="-1"></video>
+
+        <!-- Dialogue overlay — HTML/CSS layer, display only, no burn-in -->
+        <div class="dialogue-overlay hidden" id="dialogue-overlay">
+          <span class="dialogue-overlay-text" id="dialogue-overlay-text"></span>
+        </div>
+
+        <!-- Pre-roll count-in dots -->
+        <div class="preroll-dots hidden" id="preroll-dots">
+          <div class="preroll-dot" id="preroll-dot-1"></div>
+          <div class="preroll-dot" id="preroll-dot-2"></div>
+          <div class="preroll-dot" id="preroll-dot-3"></div>
+        </div>
+        <div class="timecode-display video-timecode" id="transport-timecode">00:00:00:00</div>
+      </div>
+
+      <!-- Video info strip -->
+      <div class="video-info-strip">
+        <div class="strip-group strip-transport">
+          <div class="loop-pre-frame">
+            <button class="btn btn-transport btn-strip-toggle" id="btn-preroll-toggle" title="Cue pre-roll">Pre</button>
+            <button class="btn btn-transport btn-cue-action btn-loop" id="btn-loop" disabled title="Loop recording">&#8635;</button>
+          </div>
+          <button class="btn btn-transport btn-record" id="btn-record" disabled title="Record">
+            <span class="transport-icon" id="record-icon">&#9679;</span>
+            <span class="transport-label">Rec</span>
+          </button>
+          <button class="btn btn-transport" id="btn-play" disabled title="Play">
+            <span class="transport-icon" id="play-icon">&#9654;</span>
+            <span class="transport-label" id="play-label">Play</span>
+          </button>
+          <button class="btn btn-transport" id="btn-stop" disabled title="Stop">
+            <span class="transport-icon">&#9632;</span>
+            <span class="transport-label">Stop</span>
+          </button>
+        </div>
+        <div class="strip-divider"></div>
+        <div class="strip-group strip-playback-toggles">
+          <button class="btn btn-transport btn-strip-toggle" id="btn-good-takes-playback" title="Play all selected good takes">Good</button>
+          <button class="btn btn-transport btn-strip-toggle" id="btn-booth-tc-toggle" title="Booth timecode">TC</button>
+          <button class="btn btn-transport btn-strip-toggle btn-dx-overlay" id="btn-dialogue-overlay-toggle" title="Dialogue overlay">DX Overlay</button>
+          <div class="dx-overlay-inline hidden" id="dx-overlay-inline">
+            <button class="dx-color-dot" data-color="#ffffff" style="background:#fff" title="White"></button>
+            <button class="dx-color-dot" data-color="#f5e642" style="background:#f5e642" title="Yellow"></button>
+            <button class="dx-color-dot" data-color="#ff4444" style="background:#f44" title="Red"></button>
+            <button class="dx-size-btn" data-size="small">S</button>
+            <button class="dx-size-btn" data-size="medium">M</button>
+            <button class="dx-size-btn" data-size="large">L</button>
+          </div>
+          <div class="beep-control-frame">
+            <button class="btn btn-transport btn-strip-toggle" id="btn-beep-toggle" title="Cue beep">Beep</button>
+            <button class="btn btn-transport btn-strip-cog" id="btn-beep-settings" title="Beep settings">&#9881;</button>
+          </div>
+        </div>
+        <div class="strip-spacer"></div>
+        <div class="strip-divider"></div>
+        <div class="strip-group strip-cue-controls">
+          <button class="btn btn-transport btn-cue-action btn-locator" id="btn-mark-in" disabled title="Mark In">[</button>
+          <button class="btn btn-transport btn-cue-action btn-locator" id="btn-mark-out" disabled title="Mark Out">]</button>
+          <button class="btn btn-transport btn-cue-action btn-create-cue" id="btn-create-cue" disabled>Create Cue</button>
+        </div>
+        <span class="info-chip" id="info-timecode">--:--:--:--</span>
+        <span class="info-chip" id="info-fps">-- fps</span>
+        <span class="info-chip" id="info-resolution">-- × --</span>
+        <span class="info-chip" id="info-codec">--</span>
+        <span class="info-chip info-chip-region hidden" id="info-region">
+          IN:&nbsp;<span id="info-region-in">--:--:--:--</span>
+          &nbsp;OUT:&nbsp;<span id="info-region-out">--:--:--:--</span>
+          &nbsp;<span id="info-region-dur">-- f</span>
+        </span>
+        <div class="audio-input-row hidden" aria-hidden="true">
+          <span class="audio-input-status" id="audio-input-status" title="No input selected"></span>
+          <select class="audio-input-select" id="audio-input-select" title="Audio input device">
+            <option value="">Select input...</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- ── Timeline Area ─────────────────────────────────────────────────── -->
+      <div class="timeline-area" id="timeline-area">
+        <div class="waveform-audio-controls">
+          <span class="track-monitor-label">Video Audio</span>
+          <button class="track-monitor-btn" id="video-track-mute" title="Mute video audio">M</button>
+          <button class="track-monitor-btn" id="video-track-solo" title="Solo video audio">S</button>
+          <input type="range" class="waveform-volume-slider" id="waveform-video-volume" title="Video volume"
+            min="0" max="1" step="0.01" value="1" />
+        </div>
+        <div class="guide-audio-status" id="guide-audio-status" title="Guide audio routing status">Guide: Browser</div>
+
+        <div class="waveform-placeholder" id="waveform-placeholder">
+          <span class="wf-placeholder-text">No waveform — load a video, save the project, then generate waveform.</span>
+          <button class="btn btn-sm btn-ghost" id="btn-generate-waveform" disabled>Generate Waveform</button>
+        </div>
+
+        <!-- Zoom controls -->
+        <div class="timeline-controls hidden" id="timeline-controls">
+          <div class="zoom-controls">
+            <button class="btn btn-xs btn-ghost" id="btn-zoom-out" title="Zoom out">−</button>
+            <div class="zoom-level-strip" id="zoom-level-strip"></div>
+            <button class="btn btn-xs btn-ghost" id="btn-zoom-in"  title="Zoom in">+</button>
+          </div>
+          <div class="waveform-scale-control" id="waveform-scale-control" title="Waveform visual scale" role="slider" aria-label="Waveform visual scale" aria-valuemin="0.05" aria-valuemax="1" aria-valuenow="0.35">
+            <span class="waveform-scale-line"></span>
+            <span class="waveform-scale-handle" id="waveform-scale-handle"></span>
+          </div>
+          <div class="zoom-nav-btns">
+            <button class="btn btn-xs btn-ghost" id="btn-fit-project"    title="Fit full project">Fit</button>
+            <button class="btn btn-xs btn-ghost" id="btn-zoom-selection" title="Zoom to selection" disabled>Zoom Selection</button>
+          </div>
+          <div class="zoom-label-display"><span id="zoom-label-display">Full</span></div>
+        </div>
+
+        <!-- Ruler + waveform -->
+        <canvas class="timeline-ruler hidden" id="timeline-ruler" height="22"></canvas>
+        <div class="waveform-wrap hidden" id="waveform-wrap">
+          <canvas class="waveform-canvas" id="waveform-canvas"></canvas>
+          <div class="playhead" id="playhead"></div>
+          <div class="region-highlight" id="region-highlight"></div>
+          <div class="region-marker marker-in  hidden" id="marker-in">IN</div>
+          <div class="region-marker marker-out hidden" id="marker-out">OUT</div>
+        </div>
+
+        <!-- Scrollbar -->
+        <div class="timeline-scrollbar-track hidden" id="timeline-scrollbar-track">
+          <div class="timeline-scrollbar-thumb" id="timeline-scrollbar-thumb"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Centre sidebar: Project / Video / Region / Playback Settings ──────── -->
+    <div class="inspector-rail">
+      <button class="inspector-toggle" id="btn-inspector-toggle" title="Show inspector" aria-label="Show inspector" aria-pressed="false">Inspector</button>
+    </div>
+
+    <aside class="sidebar sidebar-info">
+
+      <!-- Project Panel -->
+      <div class="panel" data-collapsible data-collapsed>
+        <div class="panel-header panel-header-toggle">
+          <span class="panel-title">Project</span>
+          <span class="panel-chevron">▸</span>
+        </div>
+        <div class="panel-body" style="display:none">
+          <div class="field-row"><span class="field-label">Film Title</span><span class="field-value" id="info-film-title">—</span></div>
+          <div class="field-row"><span class="field-label">Project Name</span><span class="field-value" id="info-project-name">—</span></div>
+          <div class="field-row"><span class="field-label">Project ID</span><span class="field-value field-mono small" id="info-project-id">—</span></div>
+          <div class="field-row"><span class="field-label">Created</span><span class="field-value small" id="info-created-at">—</span></div>
+          <div class="field-row"><span class="field-label">Updated</span><span class="field-value small" id="info-updated-at">—</span></div>
+          <div class="field-row"><span class="field-label">Saved</span><span class="field-value small" id="info-file-path">Not saved yet</span></div>
+          <div class="panel-action-row">
+            <button class="btn btn-xs btn-ghost" id="btn-manage-actors" disabled>Manage Actors</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Video Panel -->
+      <div class="panel" data-collapsible data-collapsed>
+        <div class="panel-header panel-header-toggle">
+          <span class="panel-title">Video</span>
+          <span class="panel-chevron">▸</span>
+        </div>
+        <div class="panel-body" style="display:none">
+          <div class="field-row"><span class="field-label">File</span><span class="field-value small" id="vmeta-filename">—</span></div>
+          <div class="field-row"><span class="field-label">Duration</span><span class="field-value" id="vmeta-duration">—</span></div>
+          <div class="field-row"><span class="field-label">Frame Rate</span><span class="field-value" id="vmeta-framerate">—</span></div>
+          <div class="field-row"><span class="field-label">Resolution</span><span class="field-value" id="vmeta-resolution">—</span></div>
+          <div class="field-row"><span class="field-label">Video Codec</span><span class="field-value" id="vmeta-vcodec">—</span></div>
+          <div class="field-row"><span class="field-label">Audio Codec</span><span class="field-value" id="vmeta-acodec">—</span></div>
+          <div class="field-row"><span class="field-label">Sample Rate</span><span class="field-value" id="vmeta-samplerate">—</span></div>
+          <div class="field-row"><span class="field-label">Channels</span><span class="field-value" id="vmeta-channels">—</span></div>
+          <div class="field-row"><span class="field-label">Bit Rate</span><span class="field-value" id="vmeta-bitrate">—</span></div>
+          <div class="field-row"><span class="field-label">Format</span><span class="field-value small" id="vmeta-format">—</span></div>
+        </div>
+      </div>
+
+      <!-- Session Settings Panel -->
+      <div class="panel" data-collapsible data-collapsed>
+        <div class="panel-header panel-header-toggle">
+          <span class="panel-title">Session Settings</span>
+          <span class="panel-chevron">▸</span>
+        </div>
+        <div class="panel-body" style="display:none">
+          <div class="field-row"><span class="field-label">Frame Rate</span><span class="field-value" id="settings-framerate">—</span></div>
+          <div class="field-row"><span class="field-label">Sample Rate</span><span class="field-value" id="settings-samplerate">—</span></div>
+          <div class="field-row"><span class="field-label">Bit Depth</span><span class="field-value" id="settings-bitdepth">—</span></div>
+          <div class="field-row lock-indicator hidden" id="framerate-lock-row">
+            <span class="field-label"></span>
+            <span class="field-value lock-badge">🔒 Locked by cues</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audio I/O Panel -->
+      <div class="panel" data-collapsible data-collapsed>
+        <div class="panel-header panel-header-toggle">
+          <span class="panel-title">Audio I/O</span>
+          <span class="panel-chevron">▸</span>
+        </div>
+        <div class="panel-body" style="display:none">
+          <div class="field-row"><span class="field-label">Engine</span><span class="field-value" id="audio-engine-status">Not checked</span></div>
+          <div class="field-row"><span class="field-label">Devices</span><span class="field-value" id="audio-engine-device-count">—</span></div>
+          <div class="field-row"><span class="field-label">Routing</span><span class="field-value" id="audio-engine-routing-status">—</span></div>
+          <div class="field-row"><span class="field-label">Native I/O</span><span class="field-value small field-mono" id="audio-engine-io-status">—</span></div>
+          <div class="audio-engine-setting-row">
+            <span class="field-label">Buffer</span>
+            <select class="audio-engine-select" id="audio-engine-buffer-size">
+              <option value="64">64</option>
+              <option value="128" selected>128</option>
+              <option value="256">256</option>
+              <option value="512">512</option>
+            </select>
+          </div>
+          <div class="audio-engine-setting-row">
+            <span class="field-label">Rec Offset</span>
+            <input class="audio-engine-number" id="audio-engine-recording-offset-ms"
+              type="number" min="-1000" max="1000" step="1" value="0" title="Recording timeline offset in milliseconds. Negative pulls takes earlier." />
+            <span class="field-value small">ms</span>
+          </div>
+          <div class="audio-engine-offset-feedback" id="audio-engine-recording-offset-feedback">0ms recording offset applied</div>
+          <div class="audio-engine-open-row">
+            <select class="audio-engine-select" id="audio-engine-device-select">
+              <option value="">Select device…</option>
+            </select>
+            <button class="btn btn-xs btn-ghost" id="btn-open-audio-engine-device" disabled>Open</button>
+            <button class="btn btn-xs btn-ghost" id="btn-open-audio-engine-diagnostic" disabled>Diagnostic</button>
+          </div>
+          <div class="audio-engine-record-row">
+            <button class="btn btn-xs btn-ghost" id="btn-native-record-start" disabled>Rec WAV</button>
+            <button class="btn btn-xs btn-ghost" id="btn-native-record-stop" disabled>Stop WAV</button>
+            <span class="field-value small" id="audio-engine-record-status">Idle</span>
+          </div>
+          <div class="audio-engine-lane-row">
+            <button class="audio-engine-arm-dot" id="audio-engine-mic1-arm" title="Record arm" aria-pressed="false"></button>
+            <input class="audio-engine-lane-name" id="audio-engine-mic1-name" value="Mic 1" title="Track name" />
+            <select class="audio-engine-select" id="audio-engine-mic1-source"></select>
+            <button class="audio-engine-monitor-btn" id="audio-engine-mic1-monitor" title="Input monitoring" aria-pressed="false">🔈</button>
+          </div>
+          <div class="audio-engine-lane-row">
+            <button class="audio-engine-arm-dot" id="audio-engine-mic2-arm" title="Record arm" aria-pressed="false"></button>
+            <input class="audio-engine-lane-name" id="audio-engine-mic2-name" value="Mic 2" title="Track name" />
+            <select class="audio-engine-select" id="audio-engine-mic2-source"></select>
+            <button class="audio-engine-monitor-btn" id="audio-engine-mic2-monitor" title="Input monitoring" aria-pressed="false">🔈</button>
+          </div>
+          <div class="audio-engine-talkback-row">
+            <span class="field-label">Talkback</span>
+            <select class="audio-engine-select" id="audio-engine-talkback-source"></select>
+            <button class="btn btn-xs btn-ghost" id="btn-audio-engine-talkback" disabled>Hold</button>
+          </div>
+          <div class="audio-engine-output-grid">
+            <span class="field-label">Control</span>
+            <select class="audio-engine-select" id="audio-engine-control-output-pair"></select>
+          </div>
+          <div class="audio-engine-output-grid">
+            <span class="field-label">Booth</span>
+            <select class="audio-engine-select" id="audio-engine-booth-output-pair"></select>
+          </div>
+          <div class="audio-engine-meter-list" id="audio-engine-meter-list">
+            <div class="audio-engine-meter-row">
+              <span class="audio-engine-meter-label">Input 1</span>
+              <span class="audio-engine-meter-track"><span class="audio-engine-meter-fill" id="audio-engine-meter-input-1"></span></span>
+            </div>
+            <div class="audio-engine-meter-row">
+              <span class="audio-engine-meter-label">Input 2</span>
+              <span class="audio-engine-meter-track"><span class="audio-engine-meter-fill" id="audio-engine-meter-input-2"></span></span>
+            </div>
+          </div>
+          <div class="audio-engine-route-map" id="audio-engine-route-map"></div>
+          <div class="audio-engine-device-list hidden" id="audio-engine-device-list" aria-hidden="true"></div>
+          <div class="panel-action-row">
+            <button class="btn btn-xs btn-ghost" id="btn-refresh-audio-engine">Refresh</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- In/Out Region Panel -->
+      <div class="panel" data-collapsible data-collapsed>
+        <div class="panel-header panel-header-toggle">
+          <span class="panel-title">In / Out Region</span>
+          <span class="panel-chevron">▸</span>
+        </div>
+        <div class="panel-body" style="display:none">
+          <div class="field-row"><span class="field-label">Mark In</span><span class="field-value field-mono" id="region-in-tc">—</span></div>
+          <div class="field-row"><span class="field-label">Mark In (f)</span><span class="field-value field-mono small" id="region-in-frames">—</span></div>
+          <div class="field-row"><span class="field-label">Mark Out</span><span class="field-value field-mono" id="region-out-tc">—</span></div>
+          <div class="field-row"><span class="field-label">Mark Out (f)</span><span class="field-value field-mono small" id="region-out-frames">—</span></div>
+          <div class="field-row"><span class="field-label">Duration</span><span class="field-value field-mono" id="region-duration">—</span></div>
+          <div class="field-row"><span class="field-label">Loop</span><span class="field-value" id="region-loop-status">Off</span></div>
+        </div>
+      </div>
+
+      <!-- Playback Settings Panel — open by default -->
+      <div class="panel hidden" data-collapsible>
+        <div class="panel-header panel-header-toggle">
+          <span class="panel-title">Playback Settings</span>
+          <span class="panel-chevron">▾</span>
+        </div>
+        <div class="panel-body">
+
+          <!-- Playback Volume -->
+          <div class="field-row setting-row">
+            <span class="field-label">Video Volume</span>
+            <div class="slider-wrap">
+              <input type="range" class="vol-slider" id="setting-playback-volume"
+                min="0" max="1" step="0.01" value="1" />
+              <span class="vol-pct" id="setting-playback-volume-pct">100%</span>
+            </div>
+          </div>
+
+          <!-- Cue Pre-roll -->
+          <div class="field-row setting-row">
+            <span class="field-label">Cue Pre-roll</span>
+            <label class="toggle-label">
+              <input type="checkbox" id="setting-preroll-enabled" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <!-- Beep Volume -->
+          <div class="field-row setting-row">
+            <span class="field-label">Beep Volume</span>
+            <div class="slider-wrap">
+              <input type="range" class="vol-slider" id="setting-beep-volume"
+                min="0" max="1" step="0.01" value="0.45" />
+              <span class="vol-pct" id="setting-beep-volume-pct">45%</span>
+            </div>
+          </div>
+
+          <!-- Dialogue overlay -->
+          <div class="field-row setting-row">
+            <span class="field-label">Dialogue Overlay</span>
+            <label class="toggle-label">
+              <input type="checkbox" id="setting-overlay-enabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="field-row setting-row">
+            <span class="field-label">Booth TC</span>
+            <label class="toggle-label">
+              <input type="checkbox" id="setting-booth-tc-enabled" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+
+          <div class="overlay-sub-settings" id="overlay-sub-settings">
+            <div class="field-row setting-row">
+              <span class="field-label">Color</span>
+              <div class="color-picker-row" id="overlay-color-picker">
+                <button class="color-swatch active" data-color="#ffffff" style="background:#fff" title="White"></button>
+                <button class="color-swatch" data-color="#f5e642" style="background:#f5e642" title="Yellow"></button>
+                <button class="color-swatch" data-color="#ff4444" style="background:#f44" title="Red"></button>
+                <button class="color-swatch" data-color="#44dd66" style="background:#44dd66" title="Green"></button>
+              </div>
+            </div>
+            <div class="field-row setting-row">
+              <span class="field-label">Font Size</span>
+              <div class="segmented-control" id="overlay-font-size">
+                <button class="seg-btn" data-size="small">S</button>
+                <button class="seg-btn active" data-size="medium">M</button>
+                <button class="seg-btn" data-size="large">L</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ── Right panel: ADR Cue List + Detail ──────────────────────────────── -->
+    <aside class="sidebar sidebar-cues">
+
+      <!-- Cue list header -->
+      <div class="cue-panel-header">
+        <span class="panel-title">ADR Cues</span>
+      </div>
+
+      <!-- Character filter dropdown (not an assignment control) -->
+      <div class="cue-character-bar" id="cue-character-bar">
+        <label class="char-bar-label">Filter</label>
+        <select class="char-select" id="cue-character-filter">
+          <option value="">ALL CHARACTERS</option>
+          <option value="__open__">SHOW ALL OPEN CUES</option>
+        </select>
+      </div>
+
+      <!-- Cue list -->
+      <div class="cue-list" id="cue-list">
+        <div class="cue-empty-state" id="cue-empty-state">
+          No cues yet. Mark In and Out on the timeline, then click Create Cue.
+        </div>
+      </div>
+
+      <!-- Cue detail editor (shown when a cue is selected) -->
+      <div class="cue-detail hidden" id="cue-detail">
+        <div class="cue-detail-header">
+          <span class="cue-detail-number" id="cue-detail-number">ADR-001</span>
+          <span class="cue-detail-char" id="cue-detail-char">—</span>
+          <!-- Status toggle: click to toggle OPEN ↔ COMPLETED -->
+          <button class="btn btn-xs cue-status-btn" id="btn-cue-status" title="Toggle status">open</button>
+          <button class="btn btn-xs btn-danger" id="btn-delete-cue">Delete</button>
+        </div>
+        <div class="cue-detail-body">
+          <!-- Timing row (display only) -->
+          <div class="cue-detail-row cue-timing-row">
+            <span class="cue-timing-item">
+              <span class="cue-timing-label">In</span>
+              <span class="cue-timing-value field-mono" id="cue-detail-in">—</span>
+            </span>
+            <span class="cue-timing-sep">→</span>
+            <span class="cue-timing-item">
+              <span class="cue-timing-label">Out</span>
+              <span class="cue-timing-value field-mono" id="cue-detail-out">—</span>
+            </span>
+            <span class="cue-timing-item">
+              <span class="cue-timing-label">Dur</span>
+              <span class="cue-timing-value field-mono" id="cue-detail-dur">—</span>
+            </span>
+          </div>
+          <!-- Dialogue -->
+          <div class="cue-detail-row">
+            <label class="cue-detail-label">Dialogue</label>
+            <textarea class="cue-detail-textarea" id="cue-detail-dialogue" rows="3"
+              placeholder="Enter dialogue…" spellcheck="true"></textarea>
+          </div>
+          <!-- Notes -->
+          <div class="cue-detail-row">
+            <label class="cue-detail-label">Notes</label>
+            <textarea class="cue-detail-textarea" id="cue-detail-notes" rows="2"
+              placeholder="Production notes…" spellcheck="true"></textarea>
+          </div>
+          <!-- Assigned Actor -->
+          <div class="cue-detail-row">
+            <label class="cue-detail-label">Assigned Actor</label>
+            <select class="cue-detail-select" id="cue-detail-actor">
+              <option value="">Unassigned</option>
+            </select>
+          </div>
+          <div class="cue-detail-row cue-detail-actions">
+            <button class="btn btn-sm btn-primary" id="btn-save-cue">Save Changes</button>
+          </div>
+
+          <!-- ── Takes ────────────────────────────────────────────────────── -->
+          <div class="cue-detail-takes" id="cue-detail-takes">
+            <!-- Populated dynamically by renderTakeList() -->
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- ── Transport Bar ──────────────────────────────────────────────────────── -->
+  <footer class="transport-bar">
+    <div class="transport-left">
+      <button class="btn btn-transport btn-record" id="legacy-btn-record" disabled title="Record (R2: not yet implemented)">
+        <span class="transport-icon" id="legacy-record-icon">⏺</span>
+        <span class="transport-label">Record</span>
+      </button>
+      <button class="btn btn-transport" id="legacy-btn-play" disabled>
+        <span class="transport-icon" id="legacy-play-icon">▶</span>
+        <span class="transport-label" id="legacy-play-label">Play</span>
+      </button>
+      <button class="btn btn-transport" id="legacy-btn-stop" disabled>
+        <span class="transport-icon">■</span>
+        <span class="transport-label">Stop</span>
+      </button>
+    </div>
+    <div class="transport-center">
+      <div class="timecode-display" id="legacy-transport-timecode">00:00:00:00</div>
+    </div>
+    <div class="transport-right">
+      <button class="btn btn-transport btn-cue-action" id="legacy-btn-mark-in"  disabled><span class="transport-icon-sm">⬤</span> Mark In</button>
+      <button class="btn btn-transport btn-cue-action" id="legacy-btn-mark-out" disabled><span class="transport-icon-sm">⬤</span> Mark Out</button>
+      <button class="btn btn-transport btn-cue-action btn-loop" id="legacy-btn-loop" disabled><span class="transport-icon-sm">⟳</span> Loop</button>
+      <div class="transport-divider"></div>
+      <button class="btn btn-transport btn-cue-action btn-create-cue" id="legacy-btn-create-cue" disabled>
+        <span class="transport-icon-sm">+</span> Create Cue
+      </button>
+      <div class="transport-divider"></div>
+      <!-- ── Audio input selector ──────────────────────────────────────────── -->
+      <div class="audio-input-row hidden" aria-hidden="true">
+        <span class="audio-input-status" id="legacy-audio-input-status" title="No input selected"></span>
+        <select class="audio-input-select" id="legacy-audio-input-select" title="Audio input device">
+          <option value="">Select input…</option>
+        </select>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ── New Project Modal ──────────────────────────────────────────────────── -->
+  <div class="modal-overlay hidden" id="modal-new-project">
+    <div class="modal">
+      <div class="modal-header"><span class="modal-title">New Project</span></div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="input-film-title">Film Title</label>
+          <input type="text" class="form-input" id="input-film-title" placeholder="e.g. The Long Road Home" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="input-project-name">Session Name</label>
+          <input type="text" class="form-input" id="input-project-name" placeholder="e.g. TLRH_ADR_Session_01" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Parent Location</label>
+          <div class="new-project-location-row">
+            <button class="btn btn-ghost" id="btn-new-project-location" type="button">Choose...</button>
+            <span class="form-hint" id="new-project-location-label">No location selected</span>
+          </div>
+          <div class="form-hint" id="new-project-preview">A session folder will be created here.</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-modal-create">Create Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Create Cue Modal ───────────────────────────────────────────────────── -->
+  <!--
+    New unified modal: select existing character OR type a new one.
+    No dialogue/notes here — those live in cue detail after creation.
+  -->
+  <div class="modal-overlay hidden" id="modal-create-cue">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Create Cue</span>
+        <span class="modal-subtitle" id="create-cue-timing">—</span>
+      </div>
+      <div class="modal-body">
+
+        <!-- Existing character dropdown -->
+        <div class="form-group" id="create-cue-existing-group">
+          <label class="form-label" for="create-cue-char-select">Character</label>
+          <select class="form-select" id="create-cue-char-select">
+            <option value="">— select existing character —</option>
+          </select>
+        </div>
+
+        <!-- Divider shown only when characters exist -->
+        <div class="form-divider" id="create-cue-divider">
+          <span>or</span>
+        </div>
+
+        <!-- New character inline creation -->
+        <div class="form-group">
+          <label class="form-label" for="create-cue-new-char">New Character Name</label>
+          <input type="text" class="form-input" id="create-cue-new-char"
+            placeholder="e.g. ELENA" autocomplete="off" />
+          <span class="form-hint">Saved as uppercase. Leave blank to use selection above.</span>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-create-cue-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-create-cue-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Export ADR List PDF Modal ─────────────────────────────────────────── -->
+  <div class="modal-overlay hidden" id="modal-export-pdf">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Export ADR List PDF</span>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="input-prepared-by">Prepared By</label>
+          <input type="text" class="form-input" id="input-prepared-by"
+            placeholder="e.g. A. Director" autocomplete="off" />
+          <span class="form-hint">Appears in the footer of the PDF. Saved with the project.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-export-modal-cancel">Cancel</button>
+        <button class="btn btn-primary" id="btn-export-modal-confirm">Export PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="modal-beep-settings">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Beep Settings</span>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="beep-type-select">Type</label>
+          <select class="form-select" id="beep-type-select">
+            <option value="beep">Beep</option>
+            <option value="click">Click</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="beep-modal-volume">Volume</label>
+          <input type="range" class="vol-slider" id="beep-modal-volume" min="0" max="1" step="0.01" value="0.45" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-beep-modal-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Actor Manager Modal ───────────────────────────────────────────────── -->
+  <div class="modal-overlay hidden" id="modal-actors">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <span class="modal-title">Manage Actors</span>
+      </div>
+      <div class="modal-body">
+
+        <!-- Actor list -->
+        <div class="actor-list" id="actor-list">
+          <!-- populated by JS -->
+        </div>
+
+        <!-- Add actor form -->
+        <div class="actor-add-form">
+          <div class="actor-add-fields">
+            <input type="text" class="form-input" id="actor-input-name"
+              placeholder="Actor name (required)" autocomplete="off" />
+            <input type="email" class="form-input" id="actor-input-email"
+              placeholder="Email address (required)" autocomplete="off" />
+          </div>
+          <button class="btn btn-sm btn-primary" id="btn-actor-add">Add Actor</button>
+        </div>
+        <div class="form-error hidden" id="actor-form-error"></div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-actors-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
