@@ -22,6 +22,7 @@ const {
   generateAdrSessionReportCsv,
   generateAdrSessionReportJson,
 } = require('../services/export/adrSessionReport');
+const { exportGoodTakesPackage } = require('../services/export/goodTakesPackage');
 const { getProject }          = require('./projectHandlers');
 
 function safeName(value, fallback) {
@@ -138,6 +139,50 @@ function register(ipcMain, getWindow) {
     }
 
     return { success: true, folderPath: reportDir, csvPath, jsonPath };
+  });
+
+  ipcMain.handle('export:goodTakesPackage', async (_event, opts = {}) => {
+    const project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+    const exportRecordingOffsetMs = Number(opts.recordingOffsetMs);
+    const projectForExport = Number.isFinite(exportRecordingOffsetMs)
+      ? {
+          ...project,
+          settings: {
+            ...(project.settings || {}),
+            workspace: {
+              ...(project.settings?.workspace || {}),
+              recordingOffsetMs: exportRecordingOffsetMs,
+            },
+          },
+        }
+      : project;
+
+    const selectedCount = (projectForExport.takes || []).filter(take => take.isSelected).length;
+    if (!selectedCount) {
+      return { success: false, error: 'No good takes are selected.' };
+    }
+
+    const win = getWindow();
+    const saveResult = await dialog.showOpenDialog(win, {
+      title: 'Export Full-Length Good Takes Folder',
+      defaultPath: getExportsPath(project) || undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (saveResult.canceled || !saveResult.filePaths?.[0]) {
+      return { success: false, error: 'Export cancelled.' };
+    }
+
+    try {
+      const result = exportGoodTakesPackage({
+        project: projectForExport,
+        destinationRoot: saveResult.filePaths[0],
+      });
+      return { success: true, ...result };
+    } catch (err) {
+      console.error('[exportHandlers] Good takes package failed:', err);
+      return { success: false, error: `Good takes package failed: ${err.message}` };
+    }
   });
 }
 

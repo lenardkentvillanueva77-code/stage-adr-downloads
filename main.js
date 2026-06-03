@@ -209,6 +209,8 @@ function buildMenu() {
     {
       label: 'Export',
       submenu: [
+        { label: 'Full-Length Good Takes...', click: () => mainWindow?.webContents.send('menu:export-good-takes-package') },
+        { type: 'separator' },
         { label: 'ADR Session Report...', click: () => mainWindow?.webContents.send('menu:export-report') },
         { type: 'separator' },
         { label: 'ADR List CSV...', click: () => mainWindow?.webContents.send('menu:export-csv') },

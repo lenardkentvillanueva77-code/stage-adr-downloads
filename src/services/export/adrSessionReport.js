@@ -13,7 +13,7 @@ function row(values) {
   return values.map(csvCell).join(',');
 }
 
-function buildRows(project) {
+function buildAdrSessionRows(project) {
   const characters = project.characters || [];
   const actors = project.actors || [];
   const cues = project.cues || [];
@@ -69,7 +69,7 @@ function generateAdrSessionReportJson({ project }) {
       projectName: project.projectName,
       filmTitle: project.filmTitle,
     },
-    rows: buildRows(project),
+    rows: buildAdrSessionRows(project),
   };
 
   return Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
@@ -104,7 +104,7 @@ function generateAdrSessionReportCsv({ project }) {
   ];
 
   const lines = [row(headers)];
-  for (const item of buildRows(project)) {
+  for (const item of buildAdrSessionRows(project)) {
     lines.push(row([
       item.projectName,
       item.filmTitle,
@@ -137,6 +137,7 @@ function generateAdrSessionReportCsv({ project }) {
 }
 
 module.exports = {
+  buildAdrSessionRows,
   generateAdrSessionReportCsv,
   generateAdrSessionReportJson,
 };

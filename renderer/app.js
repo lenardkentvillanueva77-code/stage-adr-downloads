@@ -2587,7 +2587,7 @@ async function syncReviewPlayback(timelineSeconds) {
   if (timelineSeconds < takeStart) { stopReviewPlayback(); return; }
   const offset = Math.max(0, timelineSeconds - takeStart);
   const laneId = track.laneId || activeAuditionLaneId;
-  const playbackId = `audition:${take.takeId}:${laneId}`;
+  const playbackId = `audition:${take.takeId}:${laneId}:offset:${getRecordingOffsetMs()}`;
   if (nativeDeviceOpen) {
     const sameNativeReview = nativeReviewPlaybackId === playbackId
       && reviewAudioTakeId === take.takeId
@@ -2663,7 +2663,7 @@ async function syncGoodTakesPlayback(timelineSeconds) {
     if (duration > 0 && offset > duration + 0.1) continue;
 
     const laneId = track.laneId || 'mic1';
-    const key = `${take.takeId}:${laneId}`;
+    const key = `${take.takeId}:${laneId}:offset:${getRecordingOffsetMs()}`;
     if (take.takeId === activeAuditionTakeId && laneId === activeAuditionLaneId) continue;
     activeKeys.add(key);
 
@@ -4815,6 +4815,33 @@ async function submitExportReport() {
 }
 // ═══════════════════════════════════════════════════════════════════════════════
 
+async function submitExportGoodTakesPackage() {
+  if (!currentProject) return;
+  if (els.audioEngineRecordingOffsetMs) {
+    ws.recordingOffsetMs = getRecordingOffsetMsFromInput();
+    els.audioEngineRecordingOffsetMs.value = ws.recordingOffsetMs;
+    updateRecordingOffsetFeedback();
+    await saveWorkspaceSettings({ persist: true });
+  }
+  setStatusInfo('Exporting full-length good takes...');
+  const exportOffsetMs = getRecordingOffsetMs();
+  const result = await window.api.export.goodTakesPackage({ recordingOffsetMs: exportOffsetMs });
+  if (!result.success) {
+    if (result.error !== 'Export cancelled.') setStatusError(`Full-length good takes export failed: ${result.error}`);
+    else setStatusInfo('Export cancelled.');
+    return;
+  }
+
+  const stemCount = Array.isArray(result.renderedFiles) ? result.renderedFiles.length : Array.isArray(result.copiedFiles) ? result.copiedFiles.length : 0;
+  const missingCount = Array.isArray(result.missingFiles) ? result.missingFiles.length : 0;
+  const unsupportedCount = Array.isArray(result.unsupportedFiles) ? result.unsupportedFiles.length : 0;
+  if (missingCount > 0 || unsupportedCount > 0) {
+    setStatusWarn(`Full-length stems exported with ${exportOffsetMs}ms offset, ${missingCount} missing and ${unsupportedCount} unsupported source file(s): ${result.packageRoot}`);
+    return;
+  }
+  setStatusOk(`Full-length good takes exported with ${exportOffsetMs}ms offset (${stemCount} stem${stemCount === 1 ? '' : 's'}): ${result.packageRoot}`);
+}
+
 function formatDate(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString(undefined, { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }); }
@@ -5104,6 +5131,13 @@ async function commitRecordingOffsetFromInput() {
   els.audioEngineRecordingOffsetMs.value = ws.recordingOffsetMs;
   updateRecordingOffsetFeedback();
   await saveWorkspaceSettings({ persist: true });
+  stopReviewPlayback();
+  stopGoodTakesPlayback();
+  if (isPlaying) {
+    const timelineSeconds = els.videoPlayer?.currentTime || 0;
+    syncReviewPlayback(timelineSeconds).catch(() => {});
+    syncGoodTakesPlayback(timelineSeconds).catch(() => {});
+  }
   _hasUnsavedChanges = false;
   updateWindowTitle();
   setStatusInfo(`${ws.recordingOffsetMs}ms recording offset saved.`);
@@ -6012,6 +6046,7 @@ window.api.onMenu.loadVideo(    () => els.btnLoadVideo.click());
 window.api.onMenu.manageActors?.(() => {
   if (currentProject) showActorModal();
 });
+window.api.onMenu.exportGoodTakesPackage?.(() => submitExportGoodTakesPackage());
 window.api.onMenu.exportReport( () => submitExportReport());
 window.api.onMenu.exportCsv(    () => submitExportCsv());
 window.api.onMenu.exportPdf(    () => showExportModal());

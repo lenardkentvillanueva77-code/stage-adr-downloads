@@ -149,6 +149,7 @@ contextBridge.exposeInMainWorld('api', {
      */
     adrListCsv: ()     => ipcRenderer.invoke('export:adrListCsv'),
     adrSessionReport: () => ipcRenderer.invoke('export:adrSessionReport'),
+    goodTakesPackage: (opts) => ipcRenderer.invoke('export:goodTakesPackage', opts),
   },
 
   // ── Dialogs ─────────────────────────────────────────────────────────────────
@@ -170,6 +171,7 @@ contextBridge.exposeInMainWorld('api', {
       loadVideo:     (cb) => ipcRenderer.on('menu:load-video',      cb),
       manageActors:  (cb) => ipcRenderer.on('menu:manage-actors',   cb),
       exportReport:  (cb) => ipcRenderer.on('menu:export-report',   cb),
+      exportGoodTakesPackage: (cb) => ipcRenderer.on('menu:export-good-takes-package', cb),
       exportCsv:     (cb) => ipcRenderer.on('menu:export-csv',      cb),
       exportPdf:     (cb) => ipcRenderer.on('menu:export-pdf',      cb),
       returnToStartOnStop: (cb) => ipcRenderer.on('menu:return-to-start-on-stop', (_event, checked) => cb(checked)),
