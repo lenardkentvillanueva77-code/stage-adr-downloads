@@ -23,6 +23,7 @@ const actorHandlers    = require('./src/ipc/actorHandlers');
 const recordingHandlers = require('./src/ipc/recordingHandlers');
 const audioEngineHandlers = require('./src/ipc/audioEngineHandlers');
 const { client: audioEngineClient } = require('./src/services/audioEngine');
+const recentProjects = require('./src/services/persistence/recentProjects');
 
 const { checkFfprobeAvailability } = require('./src/services/media/ffprobe');
 const { checkFfmpegAvailability }  = require('./src/services/media/ffmpeg');
@@ -150,6 +151,33 @@ function toggleBoothFullscreen() {
 
 // ── Application menu ──────────────────────────────────────────────────────────
 
+function buildOpenRecentSubmenu() {
+  const recentProjectItems = recentProjects.readRecentProjects().map(entry => {
+    const labelBase = entry.projectName || path.basename(entry.filePath);
+    const label = entry.filmTitle ? `${entry.filmTitle} / ${labelBase}` : labelBase;
+    return {
+      label,
+      sublabel: entry.filePath,
+      click: () => mainWindow?.webContents.send('menu:open-recent-project', entry.filePath),
+    };
+  });
+
+  return [
+    ...(recentProjectItems.length
+      ? recentProjectItems
+      : [{ label: 'No Recent Projects', enabled: false }]),
+    { type: 'separator' },
+    {
+      label: 'Clear Recent Projects',
+      enabled: recentProjectItems.length > 0,
+      click: () => {
+        recentProjects.clearRecentProjects();
+        buildMenu();
+      },
+    },
+  ];
+}
+
 function buildMenu() {
   const isMac = process.platform === 'darwin';
 
@@ -167,6 +195,7 @@ function buildMenu() {
       submenu: [
         { label: 'New Project',      accelerator: 'CmdOrCtrl+N',       click: () => mainWindow?.webContents.send('menu:new-project') },
         { label: 'Open Project…',    accelerator: 'CmdOrCtrl+O',       click: () => mainWindow?.webContents.send('menu:open-project') },
+        { label: 'Open Recent', submenu: buildOpenRecentSubmenu() },
         { type: 'separator' },
         { label: 'Save Project',     accelerator: 'CmdOrCtrl+S',       click: () => mainWindow?.webContents.send('menu:save-project') },
         { label: 'Save Project As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow?.webContents.send('menu:save-project-as') },
@@ -239,7 +268,7 @@ function buildMenu() {
 
 function registerIpcHandlers() {
   // projectHandlers registers app:confirmClose internally (needs _allowClose)
-  projectHandlers.register(ipcMain, getWindow);
+  projectHandlers.register(ipcMain, getWindow, () => buildMenu());
   mediaHandlers.register(ipcMain, getWindow);
   dialogHandlers.register(ipcMain, getWindow);
   waveformHandlers.register(ipcMain, getWindow);

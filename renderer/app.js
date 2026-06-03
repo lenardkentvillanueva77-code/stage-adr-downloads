@@ -5744,6 +5744,30 @@ els.inputPreparedBy.addEventListener('keydown', e => {
 
 els.btnNewProject.addEventListener('click', showNewProjectModal);
 
+async function applyOpenedProjectResult(result) {
+  peakData = null; guideAudioPath = null; cueListFilter = '';
+  isLooping = false;
+  cancelPreroll(); hideWaveformUI(); resetCueAndTakeWorkspace(); unloadVideoPlayer();
+  applyProjectToUI(result.project, result.filePath);
+  startAutosaveTimer();
+  if (result.warnings?.length) {
+    setStatusWarn(result.warnings[0]);
+  } else {
+    const video = result.project?.video;
+    if (video?.localPath) {
+      const rv = await window.api.media.resolveVideo(video.localPath);
+      if (rv.success) {
+        loadVideoInPlayer(rv.videoSrc);
+        const wv = await window.api.waveform.load();
+        if (wv.success) { applyPeakData(wv.peaks, wv.guideAudioPath); setStatusOk(`Opened: "${result.project.projectName}" (waveform cached)`); }
+        else setStatusOk(`Opened: "${result.project.projectName}" — generate waveform to enable timeline.`);
+      } else setStatusWarn(`Project opened, but video not found: ${video.fileName || ''}`);
+    } else setStatusOk(`Opened: "${result.project.projectName}"`);
+  }
+  if (result.migrationsApplied?.length) console.info('[open] Migrations:', result.migrationsApplied.join(', '));
+  if (result.recovery?.hasRecovery) await offerAutosaveRecovery(result.recovery);
+}
+
 els.btnOpenProject.addEventListener('click', async () => {
   setStatusInfo('Opening project…');
   const result = await window.api.project.open();
@@ -5973,6 +5997,15 @@ function showPreferencePanel(panelName) {
 
 window.api.onMenu.newProject(   () => showNewProjectModal());
 window.api.onMenu.openProject(  () => els.btnOpenProject.click());
+window.api.onMenu.openRecentProject?.(async (filePath) => {
+  setStatusInfo('Opening recent project...');
+  const result = await window.api.project.openPath(filePath);
+  if (!result.success) {
+    setStatusError(`Could not open recent project: ${result.error}`);
+    return;
+  }
+  await applyOpenedProjectResult(result);
+});
 window.api.onMenu.saveProject(  () => els.btnSaveProject.click());
 window.api.onMenu.saveProjectAs(() => saveProjectAs());
 window.api.onMenu.loadVideo(    () => els.btnLoadVideo.click());

@@ -27,12 +27,14 @@ const {
   PROJECT_EXTENSION,
 } = require('../services/persistence/localStore');
 const autosave = require('../services/persistence/autosave');
+const recentProjects = require('../services/persistence/recentProjects');
 
 // ── Module init ───────────────────────────────────────────────────────────────
 
 // Initialise autosave with the Electron userData path.
 // Must happen before any autosave function is called.
 autosave.init(app.getPath('userData'));
+recentProjects.init(app.getPath('userData'));
 
 // ── Shared in-memory state ────────────────────────────────────────────────────
 
@@ -52,7 +54,42 @@ function safePathSegment(value, fallback) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function register(ipcMain, getWindow) {
+function register(ipcMain, getWindow, onRecentProjectsChanged = () => {}) {
+  const updateRecentProjects = (filePath, project) => {
+    const recents = recentProjects.addRecentProject(filePath, project);
+    onRecentProjectsChanged(recents);
+  };
+
+  const openProjectFromPath = async (filePath) => {
+    if (!filePath || !path.isAbsolute(filePath)) {
+      return { success: false, error: 'Project path is invalid.' };
+    }
+
+    const readResult = await readProject(filePath);
+    if (!readResult.success) {
+      if (!fs.existsSync(filePath)) {
+        recentProjects.removeRecentProject(filePath);
+        onRecentProjectsChanged(recentProjects.readRecentProjects());
+      }
+      return readResult;
+    }
+
+    _project = readResult.project;
+    _projectFilePath = filePath;
+    updateRecentProjects(_projectFilePath, _project);
+
+    const recovery = autosave.check(_projectFilePath, _projectId());
+
+    return {
+      success: true,
+      project: _project,
+      filePath: _projectFilePath,
+      warnings: readResult.warnings,
+      migrationsApplied: readResult.migrationsApplied,
+      recovery,
+    };
+  };
+
   ipcMain.handle('project:chooseParentFolder', async () => {
     const win = getWindow();
     const result = await dialog.showOpenDialog(win, {
@@ -111,6 +148,7 @@ function register(ipcMain, getWindow) {
     if (!writeResult.success) return writeResult;
 
     autosave.clear(_projectFilePath, _projectId());
+    updateRecentProjects(_projectFilePath, _project);
     return {
       success: true,
       project: _project,
@@ -144,6 +182,7 @@ function register(ipcMain, getWindow) {
     _project = touchProject(_project);
     // Explicit save — recovery no longer needed
     autosave.clear(_projectFilePath, _projectId());
+    updateRecentProjects(_projectFilePath, _project);
 
     return { success: true, project: _project, filePath: _projectFilePath };
   });
@@ -180,6 +219,7 @@ function register(ipcMain, getWindow) {
     _project = touchProject(_project);
     // Clear recovery for the new path too (fresh slate)
     autosave.clear(_projectFilePath, _projectId());
+    updateRecentProjects(_projectFilePath, _project);
 
     return {
       success:         true,
@@ -201,24 +241,21 @@ function register(ipcMain, getWindow) {
       return { success: false, error: 'Open cancelled.' };
     }
 
-    const filePath   = result.filePaths[0];
-    const readResult = await readProject(filePath);
-    if (!readResult.success) return readResult;
+    return openProjectFromPath(result.filePaths[0]);
+  });
 
-    _project         = readResult.project;
-    _projectFilePath = filePath;
+  ipcMain.handle('project:openPath', async (_event, { filePath } = {}) => {
+    return openProjectFromPath(filePath);
+  });
 
-    // Check for recovery (new format + legacy migration)
-    const recovery = autosave.check(_projectFilePath, _projectId());
+  ipcMain.handle('project:recent:list', async () => {
+    return { success: true, projects: recentProjects.readRecentProjects() };
+  });
 
-    return {
-      success:           true,
-      project:           _project,
-      filePath:          _projectFilePath,
-      warnings:          readResult.warnings,
-      migrationsApplied: readResult.migrationsApplied,
-      recovery,          // renamed from 'autosave' to avoid confusion
-    };
+  ipcMain.handle('project:recent:clear', async () => {
+    const recents = recentProjects.clearRecentProjects();
+    onRecentProjectsChanged(recents);
+    return { success: true };
   });
 
   // ── Get Current Project State (startup restore) ─────────────────────────────

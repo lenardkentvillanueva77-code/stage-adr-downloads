@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
     save:            ()     => ipcRenderer.invoke('project:save'),
     saveAs:          ()     => ipcRenderer.invoke('project:saveAs'),
     open:            ()     => ipcRenderer.invoke('project:open'),
+    openPath:        (filePath) => ipcRenderer.invoke('project:openPath', { filePath }),
     getCurrent:      ()     => ipcRenderer.invoke('project:getCurrent'),
     setVideo:        (meta) => ipcRenderer.invoke('project:setVideo', meta),
     updateWorkspaceSettings: (workspace, opts = {}) => ipcRenderer.invoke('project:updateWorkspaceSettings', { workspace, ...opts }),
@@ -163,6 +164,7 @@ contextBridge.exposeInMainWorld('api', {
   onMenu: {
     newProject:    (cb) => ipcRenderer.on('menu:new-project',     cb),
     openProject:   (cb) => ipcRenderer.on('menu:open-project',    cb),
+      openRecentProject: (cb) => ipcRenderer.on('menu:open-recent-project', (_event, filePath) => cb(filePath)),
       saveProject:   (cb) => ipcRenderer.on('menu:save-project',    cb),
       saveProjectAs: (cb) => ipcRenderer.on('menu:save-project-as', cb),
       loadVideo:     (cb) => ipcRenderer.on('menu:load-video',      cb),
