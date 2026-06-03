@@ -485,6 +485,7 @@ function applyProWorkspaceLayout() {
   move(els.audioEngineMic2Arm?.closest('.audio-engine-lane-row'), 'audio-console-mic2-slot');
   move(els.audioEngineTalkbackSource?.closest('.audio-engine-talkback-row'), 'audio-console-talkback-slot');
   els.btnNativeRecordStart?.closest('.audio-engine-record-row')?.classList.add('hidden');
+  els.btnOpenAudioEngineDiagnostic?.classList.add('hidden');
   move(els.audioEngineControlOutputPair?.closest('.audio-engine-output-grid'), 'audio-console-routing-slot');
   move(els.audioEngineBoothOutputPair?.closest('.audio-engine-output-grid'), 'audio-console-routing-slot');
   move(els.audioEngineMeterInput1?.closest('.audio-engine-meter-row'), 'audio-console-meter1-slot');
@@ -576,7 +577,7 @@ async function refreshAudioEnginePanel(options = {}) {
   const restartEngine = !!options.restartEngine;
   const reopenSelected = !!options.reopenSelected;
   const selectedDeviceId = els.audioEngineDeviceSelect?.value || ws.nativeAudioSetup?.deviceId || '';
-  const selectedMode = nativeDeviceOpenMode || 'professional';
+  const selectedMode = nativeDeviceOpenMode || 'studio';
 
   els.audioEngineStatus.textContent = restartEngine ? 'Restarting...' : 'Checking...';
   els.audioEngineDeviceCount.textContent = '—';
@@ -623,14 +624,17 @@ async function refreshAudioEnginePanel(options = {}) {
 
     const devices = result.devices || [];
     nativeAudioDevices = devices;
-    const capable = devices.filter(d => d.isProfessionalRoutingCapable);
+    const studioDevices = devices.filter(d => getNativeDeviceCapability(d).mode === 'studio');
+    const compactDevices = devices.filter(d => getNativeDeviceCapability(d).mode === 'compact');
     const hasProfessionalBackend = devices.some(d => ['ASIO', 'CoreAudio'].includes(d.backend));
 
     els.audioEngineStatus.textContent = 'Ready';
     els.audioEngineDeviceCount.textContent = String(devices.length);
-    els.audioEngineRoutingStatus.textContent = capable.length
-      ? 'Professional routing ready'
-      : 'No 3-in / 4-out device';
+    els.audioEngineRoutingStatus.textContent = studioDevices.length
+      ? 'Studio routing ready'
+      : compactDevices.length
+        ? 'Compact routing ready'
+        : 'No stereo output';
 
     renderAudioEngineDeviceOptions(devices);
     if (selectedDeviceId && devices.some(device => device.deviceId === selectedDeviceId)) {
@@ -648,12 +652,14 @@ async function refreshAudioEnginePanel(options = {}) {
       return;
     }
 
-    if (capable.length && hasProfessionalBackend) {
-      setStatusOk('Native audio engine found a professional routing-capable device.');
-    } else if (capable.length) {
+    if (studioDevices.length && hasProfessionalBackend) {
+      setStatusOk('Native audio engine found a studio routing-capable device.');
+    } else if (studioDevices.length) {
       setStatusWarn('Multichannel device found, but not through ASIO/CoreAudio professional backend.');
+    } else if (compactDevices.length) {
+      setStatusOk('Native audio engine ready in compact routing mode.');
     } else {
-      setStatusWarn('Native audio engine ready. No 3-in / 4-out interface detected.');
+      setStatusWarn('Native audio engine ready. No stereo output device detected.');
     }
   } catch (err) {
     const timedOut = /timed out/i.test(err.message || '');
@@ -682,11 +688,16 @@ function renderAudioEngineRouteMap(routing) {
   els.audioEngineRouteMap.textContent = '';
   const outputMap = normalizeAudioOutputMap();
   const outputLabel = index => Number.isInteger(index) && index >= 0 ? `Output ${index + 1}` : 'None';
+  const modeLabel = nativeDeviceOpenMode === 'studio'
+    ? 'Studio'
+    : nativeDeviceOpenMode === 'compact'
+      ? 'Compact'
+      : routing.profile || '—';
 
   const rows = [
-    ['Profile', routing.profile || '—'],
-    ['Record', 'Armed mic lanes → WAV'],
-    ['Talkback', 'Later: mapped input → booth only'],
+    ['Profile', modeLabel],
+    ['Record', 'Armed mic lanes -> WAV'],
+    ['Talkback', nativeDeviceOpenMode === 'studio' ? 'Mapped input -> booth only' : 'Disabled in compact mode'],
     ['Control', `${outputLabel(outputMap.controlLeft)} / ${outputLabel(outputMap.controlRight)}`],
     ['Booth', `${outputLabel(outputMap.boothLeft)} / ${outputLabel(outputMap.boothRight)}`],
   ];
@@ -709,15 +720,29 @@ function renderAudioEngineRouteMap(routing) {
   });
 }
 
+function getNativeDeviceCapability(device) {
+  const inputCount = Math.max(0, Number(device?.inputChannelCount || 0));
+  const outputCount = Math.max(0, Number(device?.outputChannelCount || 0));
+  if (inputCount >= 3 && outputCount >= 4) {
+    return { mode: 'studio', label: 'Studio routing', canOpen: true, talkback: true };
+  }
+  if (outputCount >= 2) {
+    return { mode: 'compact', label: 'Compact routing', canOpen: true, talkback: false };
+  }
+  return { mode: 'unavailable', label: 'No stereo output', canOpen: false, talkback: false };
+}
+
 function renderAudioEngineDeviceOptions(devices) {
   const savedDeviceId = ws.nativeAudioSetup?.deviceId || '';
   const currentDeviceId = els.audioEngineDeviceSelect.value || savedDeviceId;
   els.audioEngineDeviceSelect.innerHTML = '<option value="">Select device…</option>';
 
   devices.forEach(device => {
+    const capability = getNativeDeviceCapability(device);
     const option = document.createElement('option');
     option.value = device.deviceId;
-    option.textContent = `${device.backend || 'Audio'}: ${device.name || 'Unnamed device'} (${device.inputChannelCount || 0} in / ${device.outputChannelCount || 0} out)`;
+    option.disabled = !capability.canOpen;
+    option.textContent = `${device.backend || 'Audio'}: ${device.name || 'Unnamed device'} (${device.inputChannelCount || 0} in / ${device.outputChannelCount || 0} out, ${capability.label})`;
     els.audioEngineDeviceSelect.appendChild(option);
   });
 
@@ -735,6 +760,7 @@ function renderNativeLaneSourceOptions(device) {
   const inputCount = Math.max(0, Number(device?.inputChannelCount || 0));
   const inputNames = Array.isArray(device?.inputChannelNames) ? device.inputChannelNames : [];
   const savedSetup = ws.nativeAudioSetup || wsDefaults.nativeAudioSetup;
+  const capability = getNativeDeviceCapability(device);
   const fill = (selectEl, preferredIndex) => {
     const previous = selectEl.value;
     selectEl.innerHTML = '<option value="">Source...</option>';
@@ -751,6 +777,7 @@ function renderNativeLaneSourceOptions(device) {
   fill(els.audioEngineMic1Source, Number(savedSetup.micSources?.mic1 ?? 0));
   fill(els.audioEngineMic2Source, Number(savedSetup.micSources?.mic2 ?? 1));
   fill(els.audioEngineTalkbackSource, Number(savedSetup.talkbackSource ?? Math.min(2, Math.max(0, inputCount - 1))));
+  els.audioEngineTalkbackSource.disabled = capability.mode !== 'studio';
   updateNativeRecordButtons(nativeDeviceOpen);
   updateNativeTalkbackButton();
 }
@@ -759,6 +786,7 @@ function renderNativeOutputOptions(device) {
   const outputCount = Math.max(0, Number(device?.outputChannelCount || 0));
   const outputNames = Array.isArray(device?.outputChannelNames) ? device.outputChannelNames : [];
   const outputMap = normalizeAudioOutputMap();
+  const capability = getNativeDeviceCapability(device);
 
   const fillPair = (selectEl, preferredLeft) => {
     if (!selectEl) return;
@@ -776,8 +804,8 @@ function renderNativeOutputOptions(device) {
     selectEl.disabled = outputCount < 2;
   };
 
-  fillPair(els.audioEngineControlOutputPair, outputMap.controlLeft);
-  fillPair(els.audioEngineBoothOutputPair, outputMap.boothLeft);
+  fillPair(els.audioEngineControlOutputPair, outputMap.controlLeft >= 0 ? outputMap.controlLeft : 0);
+  fillPair(els.audioEngineBoothOutputPair, capability.mode === 'studio' ? outputMap.boothLeft : -1);
   renderAudioEngineRouteMap();
 }
 
@@ -828,11 +856,19 @@ async function openSelectedAudioEngineDevice() {
   if (!deviceId) return;
 
   const device = nativeAudioDevices.find(d => d.deviceId === deviceId);
+  const capability = getNativeDeviceCapability(device);
+  if (!capability.canOpen) {
+    setStatusWarn('Selected audio device does not expose a usable stereo output.');
+    return;
+  }
   els.btnOpenAudioEngineDevice.disabled = true;
   els.audioEngineRoutingStatus.textContent = 'Opening...';
 
   try {
-    const response = await window.api.audioEngine.openDevice({
+    const opener = capability.mode === 'studio'
+      ? window.api.audioEngine.openDevice
+      : window.api.audioEngine.openDiagnosticDevice;
+    const response = await opener({
       deviceId,
       sampleRate: 48000,
       bufferSize: getSelectedNativeBufferSize(),
@@ -846,22 +882,23 @@ async function openSelectedAudioEngineDevice() {
     }
 
     if (response.result?.ok) {
-      els.audioEngineRoutingStatus.textContent = 'Professional routing ready';
-      setStatusOk(`Native audio device opened: ${device?.name || deviceId}`);
+      els.audioEngineRoutingStatus.textContent = capability.mode === 'studio' ? 'Studio routing ready' : 'Compact routing ready';
+      setStatusOk(`${capability.label} opened: ${device?.name || deviceId}`);
       nativeDeviceOpen = true;
-      nativeDeviceOpenMode = 'professional';
+      nativeDeviceOpenMode = capability.mode;
       startNativeMetering();
       updateNativeRecordButtons(true);
       await configureNativeRouting();
       configureNativeMonitoring();
+      if (capability.mode !== 'studio') configureNativeTalkback(false);
       applyMonitorState();
       prepareNativeGuideAudio().catch(err => setStatusWarn('Native guide prepare failed: ' + err.message));
       if (isPlaying) syncNativeGuidePlayback(els.videoPlayer.currentTime || 0, true).catch(() => {});
       updateNativeTalkbackButton();
     } else {
-      els.audioEngineRoutingStatus.textContent = 'Professional routing unavailable';
+      els.audioEngineRoutingStatus.textContent = `${capability.label} unavailable`;
       markNativeDeviceClosed();
-      setStatusWarn(response.result?.message || 'Selected device does not meet professional routing requirements.');
+      setStatusWarn(response.result?.message || 'Selected device could not be opened.');
     }
   } catch (err) {
     els.audioEngineRoutingStatus.textContent = 'Open failed';
@@ -924,7 +961,7 @@ async function reopenNativeDeviceForBufferChange() {
   if (!nativeDeviceOpen || !nativeDeviceOpenMode || nativeRecordingActive) return;
 
   setStatusInfo(`Reopening native audio at ${getSelectedNativeBufferSize()} samples...`);
-  if (nativeDeviceOpenMode === 'professional') {
+  if (nativeDeviceOpenMode === 'studio' || nativeDeviceOpenMode === 'compact') {
     await openSelectedAudioEngineDevice();
   } else {
     await openSelectedAudioEngineDiagnostic();
@@ -1005,8 +1042,15 @@ function updateNativeRecordButtons(deviceOpen) {
 
 function updateNativeTalkbackButton() {
   const physicalInput = Number(els.audioEngineTalkbackSource.value);
-  const canTalk = nativeDeviceOpen && Number.isInteger(physicalInput) && physicalInput >= 0;
+  const selectedCapability = getNativeDeviceCapability(getSelectedNativeDevice());
+  const talkbackCapable = nativeDeviceOpenMode === 'studio' || (!nativeDeviceOpen && selectedCapability.mode === 'studio');
+  const canTalk = nativeDeviceOpen && nativeDeviceOpenMode === 'studio' && Number.isInteger(physicalInput) && physicalInput >= 0;
   els.btnAudioEngineTalkback.disabled = !canTalk;
+  els.audioEngineTalkbackSource.disabled = !talkbackCapable;
+  if (!canTalk && nativeTalkbackActive) {
+    nativeTalkbackActive = false;
+    nativeTalkbackLatched = false;
+  }
   els.btnAudioEngineTalkback.classList.toggle('active', nativeTalkbackActive);
   els.btnAudioEngineTalkback.classList.toggle('latched', nativeTalkbackLatched);
 }
@@ -1125,6 +1169,16 @@ async function configureNativeMonitoring() {
 }
 
 async function configureNativeTalkback(enabled) {
+  if (nativeDeviceOpenMode !== 'studio') {
+    nativeTalkbackActive = false;
+    nativeTalkbackLatched = false;
+    updateNativeTalkbackButton();
+    if (nativeDeviceOpen) {
+      window.api.audioEngine.configureTalkback({ enabled: false, physicalInput: -1, gain: 1.0 }).catch(() => {});
+    }
+    return;
+  }
+
   nativeTalkbackActive = !!enabled;
   updateNativeTalkbackButton();
 
@@ -5883,6 +5937,40 @@ els.modalNewProject.addEventListener('click', e => { if (e.target === els.modalN
 
 // ── Menu events ───────────────────────────────────────────────────────────────
 
+function setInspectorCollapsed(collapsed) {
+  const main = document.querySelector('.main-content');
+  if (!main || !els.btnInspectorToggle) return;
+  main.classList.toggle('info-sidebar-collapsed', !!collapsed);
+  els.btnInspectorToggle.setAttribute('aria-pressed', collapsed ? 'false' : 'true');
+  els.btnInspectorToggle.title = collapsed ? 'Show inspector' : 'Hide inspector';
+}
+
+function setPanelExpanded(panel, expanded) {
+  if (!panel) return;
+  const body = panel.querySelector('.panel-body');
+  const chevron = panel.querySelector('.panel-chevron');
+  panel.classList.remove('hidden');
+  if (expanded) {
+    panel.removeAttribute('data-collapsed');
+    if (body) body.style.display = '';
+    if (chevron) chevron.textContent = 'â–¾';
+  } else {
+    panel.setAttribute('data-collapsed', '');
+    if (body) body.style.display = 'none';
+    if (chevron) chevron.textContent = 'â–¸';
+  }
+}
+
+function showPreferencePanel(panelName) {
+  setInspectorCollapsed(false);
+  document.querySelectorAll('[data-pref-panel]').forEach(panel => {
+    const isTarget = panel.dataset.prefPanel === panelName;
+    setPanelExpanded(panel, isTarget);
+    if (panel.dataset.prefPanel === 'playback' && !isTarget) panel.classList.add('hidden');
+  });
+  document.querySelector(`[data-pref-panel="${panelName}"]`)?.scrollIntoView({ block: 'nearest' });
+}
+
 window.api.onMenu.newProject(   () => showNewProjectModal());
 window.api.onMenu.openProject(  () => els.btnOpenProject.click());
 window.api.onMenu.saveProject(  () => els.btnSaveProject.click());
@@ -5903,6 +5991,9 @@ window.api.onMenu.returnToStartOnStop((checked) => {
 window.api.onMenu.recordMode?.((mode) => {
   setRecordMode(mode);
 });
+window.api.onMenu.showPlaybackSettings?.(() => showPreferencePanel('playback'));
+window.api.onMenu.showAudioIo?.(() => showPreferencePanel('audio'));
+window.api.onMenu.showSessionSettings?.(() => showPreferencePanel('session'));
 
 window.api.onWaveform.progress(({ stage, percent }) => { updateWaveformProgress(stage, percent); });
 

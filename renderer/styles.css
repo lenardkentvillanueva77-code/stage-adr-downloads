@@ -174,15 +174,15 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .video-player { width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
 
 .audio-console-strip {
-  flex: 0 0 82px;
+  flex: 0 0 76px;
   display: grid;
-  grid-template-columns: minmax(285px, 1.04fr) minmax(180px, 0.66fr) minmax(360px, 1.15fr) minmax(245px, 0.86fr) minmax(190px, 0.68fr) minmax(235px, 0.84fr);
-  grid-template-rows: 16px 26px 26px;
-  gap: 3px 8px;
+  grid-template-columns: minmax(330px, 1.05fr) minmax(172px, 0.58fr) minmax(390px, 1.2fr) minmax(250px, 0.78fr) minmax(190px, 0.62fr) minmax(225px, 0.72fr);
+  grid-template-rows: 14px 24px 24px;
+  gap: 2px 7px;
   align-items: stretch;
-  padding: 5px 10px 8px;
-  height: 82px;
-  max-height: 82px;
+  padding: 4px 10px 6px;
+  height: 76px;
+  max-height: 76px;
   background: #202020;
   border-bottom: 1px solid #3a3a3a;
   box-shadow: inset 0 -1px 0 #111, 0 1px 0 rgba(255,255,255,0.035);
@@ -198,7 +198,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
 }
 .audio-console-heading {
   align-self: end;
-  padding: 0 6px;
+  padding: 0 6px 1px;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -237,10 +237,10 @@ body { display: flex; flex-direction: column; height: 100vh; }
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  min-height: 24px;
-  height: 24px;
+  gap: 4px;
+  padding: 1px 8px;
+  min-height: 22px;
+  height: 22px;
   overflow: hidden;
   border: 0;
   border-left: 1px solid var(--border-mid);
@@ -266,7 +266,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
   flex: 1 1 auto;
   min-width: 0;
 }
-.audio-console-strip #audio-engine-device-select { min-width: 180px; }
+.audio-console-strip #audio-engine-device-select { min-width: 215px; }
 .audio-console-device {
   gap: 4px;
 }
@@ -278,11 +278,11 @@ body { display: flex; flex-direction: column; height: 100vh; }
   align-items: stretch;
   justify-content: center;
   flex-wrap: nowrap;
-  gap: 2px;
+  gap: 1px;
   height: auto;
 }
 .audio-console-buffer .audio-engine-setting-row {
-  grid-template-columns: 86px minmax(64px, 88px) auto;
+  grid-template-columns: 70px minmax(62px, 82px) auto;
   gap: 4px;
 }
 .audio-console-buffer .audio-engine-offset-feedback { display: none; }
@@ -290,22 +290,22 @@ body { display: flex; flex-direction: column; height: 100vh; }
   flex-direction: column;
   align-items: stretch;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
   height: auto;
 }
 .audio-console-mic-lane {
   min-width: 0;
-  height: 20px;
+  height: 21px;
 }
 .audio-console-mic-lane .audio-engine-lane-row {
   width: 100%;
-  grid-template-columns: 20px minmax(105px, 132px) minmax(150px, 1fr) 24px;
-  column-gap: 9px;
+  grid-template-columns: 20px minmax(110px, 145px) minmax(170px, 1fr) 24px;
+  column-gap: 8px;
   align-items: center;
 }
 .audio-console-talkback .audio-engine-talkback-row {
   width: 100%;
-  grid-template-columns: 68px minmax(104px, 1fr) 52px;
+  grid-template-columns: 62px minmax(118px, 1fr) 46px;
 }
 .audio-console-talkback .audio-engine-record-row {
   width: auto;
@@ -316,8 +316,8 @@ body { display: flex; flex-direction: column; height: 100vh; }
   align-items: stretch;
 }
 .audio-console-routing .audio-engine-output-grid {
-  grid-template-columns: 58px minmax(0, 1fr);
-  min-width: 152px;
+  grid-template-columns: 54px minmax(0, 1fr);
+  min-width: 158px;
 }
 .audio-console-meter1 .audio-engine-meter-row,
 .audio-console-meter2 .audio-engine-meter-row {
@@ -390,11 +390,11 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .audio-console-strip .audio-engine-device-list { display: none; }
 .audio-console-strip .audio-engine-select,
 .audio-console-strip .audio-engine-number {
-  height: 22px;
+  height: 21px;
   font-size: 10px;
 }
 .audio-console-strip .btn-xs {
-  height: 22px;
+  height: 21px;
   padding: 0 6px;
 }
 .audio-console-strip .field-label {

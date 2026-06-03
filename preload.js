@@ -172,6 +172,9 @@ contextBridge.exposeInMainWorld('api', {
       exportPdf:     (cb) => ipcRenderer.on('menu:export-pdf',      cb),
       returnToStartOnStop: (cb) => ipcRenderer.on('menu:return-to-start-on-stop', (_event, checked) => cb(checked)),
       recordMode:    (cb) => ipcRenderer.on('menu:record-mode',     (_event, mode) => cb(mode)),
+      showPlaybackSettings: (cb) => ipcRenderer.on('menu:show-playback-settings', cb),
+      showAudioIo:    (cb) => ipcRenderer.on('menu:show-audio-io', cb),
+      showSessionSettings: (cb) => ipcRenderer.on('menu:show-session-settings', cb),
     },
 
   // ── App events (main → renderer) ────────────────────────────────────────────

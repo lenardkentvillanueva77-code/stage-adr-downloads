@@ -48,9 +48,9 @@
     <div class="audio-console-heading audio-console-heading-inputs">INPUTS</div>
     <div class="audio-console-heading audio-console-heading-meters">METERS</div>
     <div class="audio-console-heading audio-console-heading-display">DISPLAY</div>
-      <div class="audio-console-row audio-console-row-top">
-        <div class="audio-console-group audio-console-device" id="audio-console-device-slot"></div>
-        <div class="audio-console-group audio-console-buffer" id="audio-console-buffer-slot"></div>
+    <div class="audio-console-row audio-console-row-top">
+      <div class="audio-console-group audio-console-device" id="audio-console-device-slot"></div>
+      <div class="audio-console-group audio-console-buffer" id="audio-console-buffer-slot"></div>
       <div class="audio-console-group audio-console-mics" id="audio-console-mics-slot">
         <div class="audio-console-mic-lane" id="audio-console-mic1-slot"></div>
         <div class="audio-console-mic-lane" id="audio-console-mic2-slot"></div>
@@ -253,7 +253,7 @@
       </div>
 
       <!-- Session Settings Panel -->
-      <div class="panel" data-collapsible data-collapsed>
+      <div class="panel" data-collapsible data-collapsed data-pref-panel="session">
         <div class="panel-header panel-header-toggle">
           <span class="panel-title">Session Settings</span>
           <span class="panel-chevron">▸</span>
@@ -270,7 +270,7 @@
       </div>
 
       <!-- Audio I/O Panel -->
-      <div class="panel" data-collapsible data-collapsed>
+      <div class="panel" data-collapsible data-collapsed data-pref-panel="audio">
         <div class="panel-header panel-header-toggle">
           <span class="panel-title">Audio I/O</span>
           <span class="panel-chevron">▸</span>
@@ -368,7 +368,7 @@
       </div>
 
       <!-- Playback Settings Panel — open by default -->
-      <div class="panel hidden" data-collapsible>
+      <div class="panel hidden" data-collapsible data-pref-panel="playback">
         <div class="panel-header panel-header-toggle">
           <span class="panel-title">Playback Settings</span>
           <span class="panel-chevron">▾</span>

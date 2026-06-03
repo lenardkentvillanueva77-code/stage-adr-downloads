@@ -203,9 +203,9 @@ function buildMenu() {
           ],
         },
         { type: 'separator' },
-        { label: 'Playback Settings...', enabled: false },
-        { label: 'Audio I/O...', enabled: false },
-        { label: 'Session...', enabled: false },
+        { label: 'Playback Settings...', click: () => mainWindow?.webContents.send('menu:show-playback-settings') },
+        { label: 'Audio I/O...', click: () => mainWindow?.webContents.send('menu:show-audio-io') },
+        { label: 'Session...', click: () => mainWindow?.webContents.send('menu:show-session-settings') },
       ],
     },
     {
