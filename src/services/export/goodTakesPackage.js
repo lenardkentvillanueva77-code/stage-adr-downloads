@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { buildAdrSessionRows } = require('./adrSessionReport');
-const { framesToSeconds } = require('../../core/timecode');
+const { framesToSeconds, framesToTimecode, secondsToFrames } = require('../../core/timecode');
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const OUTPUT_BIT_DEPTH = 24;
@@ -31,6 +31,11 @@ function csvCell(value) {
 
 function csvRow(values) {
   return values.map(csvCell).join(',');
+}
+
+function formatSeconds(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? seconds.toFixed(3) : '';
 }
 
 function ensureUniquePath(filePath) {
@@ -258,6 +263,7 @@ function buildPlacements(project) {
       const sourcePath = track.filePath || take.filePath || '';
       const laneName = safeName(track.trackName || track.label || track.laneId || 'Mic');
       const timelineStartSeconds = Math.max(0, cueInSeconds + getTakeStartOffsetSecs(take, track, project));
+      const timelineStartFrames = secondsToFrames(timelineStartSeconds, frameRate);
       const base = {
         take,
         cue,
@@ -267,6 +273,10 @@ function buildPlacements(project) {
         characterName,
         laneName,
         timelineStartSeconds,
+        timelineStartFrames,
+        timelineStartTimecode: framesToTimecode(timelineStartFrames, frameRate),
+        cueInTimecode: framesToTimecode(cue.inFrames || 0, frameRate),
+        cueOutTimecode: framesToTimecode(cue.outFrames || 0, frameRate),
       };
 
       if (!sourcePath || !fs.existsSync(sourcePath)) {
@@ -321,7 +331,10 @@ function buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFil
       exportedPath: rendered?.destPath || '',
       exportCharacterFolder: rendered?.characterFolder || '',
       timelineStartSeconds: placement?.timelineStartSeconds ?? '',
-      timelineStartFrames: placement ? Math.round(placement.timelineStartSeconds * DEFAULT_SAMPLE_RATE) : '',
+      timelineStartFrames: placement?.timelineStartFrames ?? '',
+      timelineStartTimecode: placement?.timelineStartTimecode ?? '',
+      cueInTimecode: placement?.cueInTimecode ?? row.cueInTimecode ?? '',
+      cueOutTimecode: placement?.cueOutTimecode ?? row.cueOutTimecode ?? '',
       sourceExists: missing ? 'NO' : rendered ? 'YES' : '',
       exportNote: unsupported?.reason || '',
     };
@@ -335,6 +348,8 @@ function writePackageCsv(csvPath, rows) {
     'Character',
     'Actor',
     'Cue',
+    'Cue In TC',
+    'Cue Out TC',
     'In Frames',
     'Out Frames',
     'Take',
@@ -346,6 +361,7 @@ function writePackageCsv(csvPath, rows) {
     'Source File',
     'Full-Length Stem',
     'Export Status',
+    'Timeline Start TC',
     'Timeline Start Secs',
     'Duration Secs',
     'Start Offset Secs',
@@ -366,6 +382,8 @@ function writePackageCsv(csvPath, rows) {
       row.character,
       row.actor,
       row.cueNumber,
+      row.cueInTimecode,
+      row.cueOutTimecode,
       row.cueInFrames,
       row.cueOutFrames,
       row.takeNumber,
@@ -377,6 +395,7 @@ function writePackageCsv(csvPath, rows) {
       row.filePath,
       row.exportedPath,
       row.exportStatus,
+      row.timelineStartTimecode,
       row.timelineStartSeconds,
       row.durationSecs,
       row.startOffsetSecs,
@@ -393,50 +412,98 @@ function writePackageCsv(csvPath, rows) {
 }
 
 function writeSummary(summaryPath, manifest) {
+  const alternateRows = manifest.rows
+    .filter(row => row.goodTake !== 'YES')
+    .sort((a, b) => String(a.cueNumber).localeCompare(String(b.cueNumber)) || Number(a.takeNumber || 0) - Number(b.takeNumber || 0));
+
   const lines = [
-    `ADR Full-Length Good Takes Export`,
+    `POST ADR PRO - ADR DELIVERY REPORT`,
     ``,
-    `Project: ${manifest.project.projectName || ''}`,
-    `Film: ${manifest.project.filmTitle || ''}`,
-    `Generated: ${manifest.generatedAt}`,
-    `Recording offset used: ${manifest.recordingOffsetMs} ms`,
-    `Film duration: ${manifest.filmDurationSeconds.toFixed(3)} seconds`,
-    `Export sample rate: ${manifest.sampleRate} Hz`,
-    `Full-length stems: ${manifest.renderedFiles.length}`,
-    `Placed source takes: ${manifest.placements.length}`,
-    `Missing source files: ${manifest.missingFiles.length}`,
-    `Unsupported source files: ${manifest.unsupportedFiles.length}`,
+    `DELIVERY OVERVIEW`,
+    `Project:              ${manifest.project.projectName || ''}`,
+    `Film:                 ${manifest.project.filmTitle || ''}`,
+    `Generated:            ${manifest.generatedAt}`,
+    `Package folder:       ${manifest.packageRoot}`,
     ``,
-    `Folder Layout`,
-    `- Each character has its own folder.`,
-    `- Each mic lane exports as a full-length mono WAV starting at film zero.`,
-    `- Selected good takes are placed at cue In plus the take recording offset.`,
-    `- Alternate takes remain listed in the CSV/JSON report by source path.`,
+    `SYNC AND FORMAT`,
+    `Stem start:           00:00:00:00 / film zero`,
+    `Placement rule:       Cue In TC + recording offset`,
+    `Recording offset:     ${manifest.recordingOffsetMs} ms`,
+    `Film duration:        ${formatSeconds(manifest.filmDurationSeconds)} seconds`,
+    `Export format:        ${manifest.sampleRate} Hz / ${manifest.bitDepth}-bit / mono WAV`,
+    `Frame rate:           ${manifest.frameRate}`,
     ``,
-    `Full-Length Stems`,
+    `DELIVERY COUNTS`,
+    `Full-length stems:    ${manifest.renderedFiles.length}`,
+    `Placed good takes:    ${manifest.placements.length}`,
+    `Alternate take rows:  ${alternateRows.length}`,
+    `Missing sources:      ${manifest.missingFiles.length}`,
+    `Unsupported sources:  ${manifest.unsupportedFiles.length}`,
+    ``,
+    `STEMS AND PLACED GOOD TAKES`,
   ];
 
   if (manifest.renderedFiles.length) {
-    for (const file of manifest.renderedFiles) {
-      lines.push(`- ${file.characterName} / ${file.fileName} (${file.placedTakeCount} placed take${file.placedTakeCount === 1 ? '' : 's'})`);
+    for (const file of manifest.renderedFiles.sort((a, b) =>
+      a.characterName.localeCompare(b.characterName) || a.laneName.localeCompare(b.laneName))) {
+      lines.push(
+        ``,
+        `${file.characterName} - ${file.laneName}`,
+        `Stem: ${file.destPath}`,
+        `Placed takes: ${file.placedTakeCount}`
+      );
+
+      for (const source of file.placedSources) {
+        lines.push(
+          `  - ${source.cueNumber} / T${source.takeNumber} / ${source.actorName || 'No actor'}`,
+          `    Timeline: ${source.timelineStartTimecode} (${formatSeconds(source.timelineStartSeconds)}s), sample ${source.startSample}`,
+          `    Cue: ${source.cueInTimecode} -> ${source.cueOutTimecode}`,
+          `    Source: ${source.sourcePath}`
+        );
+      }
+    }
+  } else {
+    lines.push(`- None`);
+  }
+
+  lines.push(``, `ALTERNATE TAKES`);
+  if (alternateRows.length) {
+    for (const row of alternateRows) {
+      lines.push(
+        `- ${row.cueNumber || 'Cue'} / ${row.character || 'No character'} / T${row.takeNumber || ''} / ${row.trackName || row.laneId || 'Mic'}`,
+        `  Cue: ${row.cueInTimecode || ''} -> ${row.cueOutTimecode || ''}`,
+        `  Source: ${row.filePath || '(no source file)'}`
+      );
     }
   } else {
     lines.push(`- None`);
   }
 
   if (manifest.missingFiles.length) {
-    lines.push(``, `Missing Sources`);
+    lines.push(``, `MISSING SOURCES`);
     for (const file of manifest.missingFiles) {
       lines.push(`- ${file.characterName} / ${file.laneName}: ${file.sourcePath || '(blank source path)'}`);
     }
   }
 
   if (manifest.unsupportedFiles.length) {
-    lines.push(``, `Unsupported Sources`);
+    lines.push(``, `UNSUPPORTED SOURCES`);
     for (const file of manifest.unsupportedFiles) {
       lines.push(`- ${file.characterName} / ${file.laneName}: ${file.sourcePath || '(blank source path)'} (${file.reason})`);
     }
   }
+
+  lines.push(
+    ``,
+    `TECHNICAL REPORT FILES`,
+    `CSV:  ${manifest.csvPath || ''}`,
+    `JSON: ${manifest.jsonPath || ''}`,
+    ``,
+    `NOTES`,
+    `- Import each full-length WAV at film/session zero in the DAW.`,
+    `- Good takes are rendered into stems; alternates remain available via the source paths above and the CSV/JSON report.`,
+    `- Talkback is never included in exported stems.`
+  );
 
   fs.writeFileSync(summaryPath, Buffer.from(lines.join('\n'), 'utf8'));
 }
@@ -493,6 +560,9 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
         actorName: placement.actor.name || '',
         sourcePath: placement.sourcePath,
         timelineStartSeconds: placement.timelineStartSeconds,
+        timelineStartTimecode: placement.timelineStartTimecode,
+        cueInTimecode: placement.cueInTimecode,
+        cueOutTimecode: placement.cueOutTimecode,
         startSample,
         writtenSamples,
       });
@@ -537,6 +607,10 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
       laneName: placement.laneName,
       sourcePath: placement.sourcePath,
       timelineStartSeconds: placement.timelineStartSeconds,
+      timelineStartFrames: placement.timelineStartFrames,
+      timelineStartTimecode: placement.timelineStartTimecode,
+      cueInTimecode: placement.cueInTimecode,
+      cueOutTimecode: placement.cueOutTimecode,
       durationSecs: placement.durationSecs,
     })),
     missingFiles,
@@ -555,6 +629,9 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
   const jsonPath = path.join(packageRoot, `${reportBase}.json`);
   const csvPath = path.join(packageRoot, `${reportBase}.csv`);
   const summaryPath = path.join(packageRoot, `${reportBase}.txt`);
+  manifest.csvPath = csvPath;
+  manifest.jsonPath = jsonPath;
+  manifest.summaryPath = summaryPath;
 
   fs.writeFileSync(jsonPath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
   writePackageCsv(csvPath, reportRows);
