@@ -468,6 +468,16 @@ const els = {
   inputPreparedBy:        document.getElementById('input-prepared-by'),
   btnExportModalCancel:   document.getElementById('btn-export-modal-cancel'),
   btnExportModalConfirm:  document.getElementById('btn-export-modal-confirm'),
+  modalExportResult:      document.getElementById('modal-export-result'),
+  exportResultSubtitle:   document.getElementById('export-result-subtitle'),
+  exportResultOffset:     document.getElementById('export-result-offset'),
+  exportResultStems:      document.getElementById('export-result-stems'),
+  exportResultPlaced:     document.getElementById('export-result-placed'),
+  exportResultWarnings:   document.getElementById('export-result-warnings'),
+  exportResultPackagePath: document.getElementById('export-result-package-path'),
+  exportResultReportPaths: document.getElementById('export-result-report-paths'),
+  exportResultStemList:   document.getElementById('export-result-stem-list'),
+  btnExportResultClose:   document.getElementById('btn-export-result-close'),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4815,6 +4825,58 @@ async function submitExportReport() {
 }
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function showExportResultModal(result, exportOffsetMs) {
+  const stems = Array.isArray(result.renderedFiles) ? result.renderedFiles : [];
+  const missing = Array.isArray(result.missingFiles) ? result.missingFiles : [];
+  const unsupported = Array.isArray(result.unsupportedFiles) ? result.unsupportedFiles : [];
+  const placedCount = stems.reduce((sum, stem) => sum + Number(stem.placedTakeCount || 0), 0);
+  const warningCount = missing.length + unsupported.length;
+
+  if (!els.modalExportResult) {
+    window.api.dialog.showInfo({
+      title: 'Full-Length Export Result',
+      message: [
+        `Offset: ${exportOffsetMs} ms`,
+        `Stems: ${stems.length}`,
+        `Placed: ${placedCount}`,
+        `Warnings: ${warningCount}`,
+        `Package: ${result.packageRoot || '-'}`,
+      ].join('\n'),
+    }).catch(() => {});
+    return;
+  }
+
+  els.exportResultSubtitle.textContent = warningCount > 0 ? 'Export completed with warnings' : 'Export completed';
+  els.exportResultOffset.textContent = `${exportOffsetMs} ms`;
+  els.exportResultStems.textContent = String(stems.length);
+  els.exportResultPlaced.textContent = String(placedCount);
+  els.exportResultWarnings.textContent = String(warningCount);
+  els.exportResultPackagePath.textContent = result.packageRoot || '-';
+  els.exportResultReportPaths.innerHTML = [
+    result.summaryPath ? `TXT: ${_escapeHtml(result.summaryPath)}` : '',
+    result.csvPath ? `CSV: ${_escapeHtml(result.csvPath)}` : '',
+    result.jsonPath ? `JSON: ${_escapeHtml(result.jsonPath)}` : '',
+  ].filter(Boolean).join('<br>') || '-';
+
+  if (stems.length) {
+    els.exportResultStemList.innerHTML = stems.map(stem => `
+      <div class="export-result-stem-row" title="${_escapeHtml(stem.destPath || '')}">
+        <span>${_escapeHtml(stem.characterName || 'Character')}</span>
+        <span>${_escapeHtml(stem.laneName || 'Mic')}</span>
+        <span class="export-result-stem-count">${Number(stem.placedTakeCount || 0)} take${Number(stem.placedTakeCount || 0) === 1 ? '' : 's'}</span>
+      </div>
+    `).join('');
+  } else {
+    els.exportResultStemList.textContent = 'No stems rendered.';
+  }
+
+  els.modalExportResult.classList.remove('hidden');
+}
+
+function hideExportResultModal() {
+  els.modalExportResult?.classList.add('hidden');
+}
+
 async function submitExportGoodTakesPackage() {
   if (!currentProject) return;
   if (els.audioEngineRecordingOffsetMs) {
@@ -4835,6 +4897,7 @@ async function submitExportGoodTakesPackage() {
   const stemCount = Array.isArray(result.renderedFiles) ? result.renderedFiles.length : Array.isArray(result.copiedFiles) ? result.copiedFiles.length : 0;
   const missingCount = Array.isArray(result.missingFiles) ? result.missingFiles.length : 0;
   const unsupportedCount = Array.isArray(result.unsupportedFiles) ? result.unsupportedFiles.length : 0;
+  showExportResultModal(result, exportOffsetMs);
   if (missingCount > 0 || unsupportedCount > 0) {
     setStatusWarn(`Full-length stems exported with ${exportOffsetMs}ms offset, ${missingCount} missing and ${unsupportedCount} unsupported source file(s): ${result.packageRoot}`);
     return;
@@ -5438,6 +5501,11 @@ els.modalBeepSettings?.addEventListener('click', e => {
   if (e.target === els.modalBeepSettings) els.modalBeepSettings.classList.add('hidden');
 });
 
+els.btnExportResultClose?.addEventListener('click', hideExportResultModal);
+els.modalExportResult?.addEventListener('click', e => {
+  if (e.target === els.modalExportResult) hideExportResultModal();
+});
+
 els.beepTypeSelect?.addEventListener('change', () => {
   ws.cueBeepType = els.beepTypeSelect.value === 'click' ? 'click' : 'beep';
   saveWorkspaceSettings();
@@ -5530,6 +5598,7 @@ document.addEventListener('keydown', (e) => {
       if (!els.modalCreateCue.classList.contains('hidden'))   { hideCreateCueModal();  break; }
       if (!els.modalNewProject.classList.contains('hidden'))  { hideNewProjectModal(); break; }
       if (!els.modalExportPdf.classList.contains('hidden'))   { hideExportModal();     break; }
+      if (els.modalExportResult && !els.modalExportResult.classList.contains('hidden')) { hideExportResultModal(); break; }
       const projectInfoModal = document.getElementById('modal-project-info');
       if (projectInfoModal && !projectInfoModal.classList.contains('hidden')) {
         projectInfoModal.classList.add('hidden');

@@ -1858,6 +1858,78 @@ button:focus-visible {
 .modal-body   { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border-subtle); }
 
+.modal-export-result .modal-body {
+  gap: 16px;
+}
+.export-result-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.export-result-metric {
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 9px 10px;
+  min-width: 0;
+}
+.export-result-label,
+.export-result-section-title {
+  display: block;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 5px;
+}
+.export-result-value {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.export-result-section {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+.export-result-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  word-break: break-all;
+}
+.export-result-stem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.export-result-stem-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1fr) minmax(70px, 0.8fr) 58px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 7px 8px;
+  font-size: 11px;
+}
+.export-result-stem-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.export-result-stem-count {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
 /* ── Forms ────────────────────────────────────────────────────────────────── */
 
 .form-group { display: flex; flex-direction: column; gap: 5px; }
