@@ -3807,7 +3807,15 @@ function renderTakeListGrouped(cueId) {
     return;
   }
 
-  const countLabel = `<div class="takes-count">Takes (${takes.length})</div>`;
+  const selectedTake = takes.find(t => t.isSelected);
+  const activeAuditionTake = activeAuditionTakeId
+    ? takes.find(t => t.takeId === activeAuditionTakeId)
+    : null;
+  const countLabel = `<div class="takes-count">
+    <span>Takes (${takes.length})</span>
+    ${selectedTake ? `<span class="takes-state-chip good">Good T${selectedTake.takeNumber}</span>` : ''}
+    ${activeAuditionTake ? `<span class="takes-state-chip audition">Audition T${activeAuditionTake.takeNumber} ${_escapeHtml(activeAuditionLaneId || '')}</span>` : ''}
+  </div>`;
   const rows = takes.map(t => {
     const actor = t.actorId
       ? (currentProject.actors.find(a => a.actorId === t.actorId)?.name || '-')
@@ -3817,22 +3825,27 @@ function renderTakeListGrouped(cueId) {
       ? t.tracks
       : [{ laneId: 'mic1', label: 'Mic 1', filePath: t.filePath, durationSecs: t.durationSecs }];
     const selectedClass = t.isSelected ? ' selected' : '';
+    const auditionClass = t.takeId === activeAuditionTakeId ? ' audition-source' : '';
     const trackRows = tracks.map(track => {
       const laneId = track.laneId || 'mic1';
+      const laneLabel = track.trackName || track.label || laneId;
       const isAuditioning = t.takeId === activeAuditionTakeId && laneId === activeAuditionLaneId;
       const activeClass = isAuditioning ? ' active' : '';
       return `<button class="take-lane-row${activeClass}" data-action="toggle-audition-track" data-lane-id="${_escapeHtml(laneId)}" data-take-id="${_escapeHtml(t.takeId)}" title="${_escapeHtml(track.filePath || '')}" aria-pressed="${isAuditioning ? 'true' : 'false'}">
-        <span>${_escapeHtml(track.label || laneId)}</span>
-        <span class="take-lane-state">${isAuditioning ? 'Audition On' : 'Audition'}</span>
+        <span class="take-lane-name"><span class="take-lane-dot"></span>${_escapeHtml(laneLabel)}</span>
+        <span class="take-lane-badges">
+          ${t.isSelected ? '<span class="take-lane-chip export">Export</span>' : ''}
+          <span class="take-lane-chip audition">${isAuditioning ? 'Auditioning' : 'Audition'}</span>
+        </span>
       </button>`;
     }).join('');
 
-    return `<div class="take-group${selectedClass}" data-take-id="${_escapeHtml(t.takeId)}">
+    return `<div class="take-group${selectedClass}${auditionClass}" data-take-id="${_escapeHtml(t.takeId)}">
       <div class="take-row">
         <span class="take-number">T${t.takeNumber}</span>
         <span class="take-duration">${dur}</span>
         ${actor ? `<span class="take-actor">${_escapeHtml(actor)}</span>` : '<span class="take-actor"></span>'}
-        <button class="btn btn-xs btn-ghost take-good-btn${t.isSelected ? ' active' : ''}" data-action="toggle-good-take" data-take-id="${_escapeHtml(t.takeId)}" aria-pressed="${t.isSelected ? 'true' : 'false'}">Good</button>
+        <button class="btn btn-xs btn-ghost take-good-btn${t.isSelected ? ' active' : ''}" data-action="toggle-good-take" data-take-id="${_escapeHtml(t.takeId)}" aria-pressed="${t.isSelected ? 'true' : 'false'}">${t.isSelected ? 'Good Take' : 'Mark Good'}</button>
       </div>
       <div class="take-lane-list">${trackRows}</div>
     </div>`;
