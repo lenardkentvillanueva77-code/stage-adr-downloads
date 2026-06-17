@@ -577,11 +577,15 @@ function isAudioEngineLoss(errorText) {
   return /timed out|exited|not writable|broken pipe|epipe|terminated|restarted/i.test(String(errorText || ''));
 }
 
-function handleNativePlaybackFailure(errorText) {
+function handleNativeEngineLoss(errorText, context = 'playback') {
   if (!isAudioEngineLoss(errorText)) return;
   clearNativeRuntimeState();
   els.audioEngineRoutingStatus.textContent = 'Needs refresh';
-  setStatusWarn('Native audio engine lost playback. Press Refresh to restart and reopen the selected device.');
+  setStatusWarn(`Native audio engine lost ${context}. Press Refresh to restart and reopen the selected device.`);
+}
+
+function handleNativePlaybackFailure(errorText) {
+  handleNativeEngineLoss(errorText, 'playback');
 }
 
 async function refreshAudioEnginePanel(options = {}) {
@@ -1019,9 +1023,23 @@ async function refreshNativeMeters() {
       const meters = result.meters || {};
       updateNativeMeterBars(meters.inputs || []);
       updateNativeIoStatus(meters);
+      return;
     }
-  } catch {
+    const message = result.error || 'Native metering failed.';
+    if (isAudioEngineLoss(message)) {
+      handleNativeEngineLoss(message, 'metering');
+      return;
+    }
     stopNativeMetering();
+    els.audioEngineIoStatus.textContent = 'Metering failed';
+  } catch (err) {
+    const message = err.message || 'Native metering failed.';
+    if (isAudioEngineLoss(message)) {
+      handleNativeEngineLoss(message, 'metering');
+      return;
+    }
+    stopNativeMetering();
+    els.audioEngineIoStatus.textContent = 'Metering failed';
   }
 }
 
@@ -1147,7 +1165,12 @@ async function configureNativeRouting() {
     const response = await window.api.audioEngine.configureRouting({ outputs });
     const result = response.result || {};
     if (!response.success || !result.ok) {
-      setStatusWarn(result.message || response.error || 'Native output routing could not be configured.');
+      const message = result.message || response.error || 'Native output routing could not be configured.';
+      if (isAudioEngineLoss(message)) {
+        handleNativeEngineLoss(message, 'routing');
+        return;
+      }
+      setStatusWarn(message);
       return;
     }
     renderAudioEngineRouteMap();
@@ -1156,6 +1179,10 @@ async function configureNativeRouting() {
       syncNativeGuidePlayback(els.videoPlayer.currentTime || 0, true).catch(() => {});
     }
   } catch (err) {
+    if (isAudioEngineLoss(err.message)) {
+      handleNativeEngineLoss(err.message, 'routing');
+      return;
+    }
     setStatusError('Native output routing failed: ' + err.message);
   }
 }
@@ -1168,7 +1195,12 @@ async function configureNativeMonitoring() {
     const response = await window.api.audioEngine.configureMonitoring({ lanes });
     const result = response.result || {};
     if (!response.success || !result.ok) {
-      setStatusWarn(result.message || response.error || 'Native monitoring could not be configured.');
+      const message = result.message || response.error || 'Native monitoring could not be configured.';
+      if (isAudioEngineLoss(message)) {
+        handleNativeEngineLoss(message, 'monitoring');
+        return;
+      }
+      setStatusWarn(message);
       return;
     }
 
@@ -1176,6 +1208,10 @@ async function configureNativeMonitoring() {
       ? `Native monitoring on: ${lanes.map(l => l.label).join(' + ')}`
       : 'Native monitoring off.');
   } catch (err) {
+    if (isAudioEngineLoss(err.message)) {
+      handleNativeEngineLoss(err.message, 'monitoring');
+      return;
+    }
     setStatusError('Native monitoring failed: ' + err.message);
   }
 }
@@ -1211,12 +1247,21 @@ async function configureNativeTalkback(enabled) {
     });
     const result = response.result || {};
     if (!response.success || !result.ok) {
-      setStatusWarn(result.message || response.error || 'Talkback could not be configured.');
+      const message = result.message || response.error || 'Talkback could not be configured.';
+      if (isAudioEngineLoss(message)) {
+        handleNativeEngineLoss(message, 'talkback');
+        return;
+      }
+      setStatusWarn(message);
       return;
     }
 
     setStatusInfo(nativeTalkbackActive ? 'Talkback open.' : 'Talkback closed.');
   } catch (err) {
+    if (isAudioEngineLoss(err.message)) {
+      handleNativeEngineLoss(err.message, 'talkback');
+      return;
+    }
     setStatusError('Talkback failed: ' + err.message);
   }
 }
