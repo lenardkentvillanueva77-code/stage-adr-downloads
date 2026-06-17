@@ -410,6 +410,8 @@ const els = {
   cueDetailIn:            document.getElementById('cue-detail-in'),
   cueDetailOut:           document.getElementById('cue-detail-out'),
   cueDetailDur:           document.getElementById('cue-detail-dur'),
+  cueOverlapDetail:       document.getElementById('cue-overlap-detail'),
+  cueOverlapList:         document.getElementById('cue-overlap-list'),
   cueDetailDialogue:      document.getElementById('cue-detail-dialogue'),
   cueDetailNotes:         document.getElementById('cue-detail-notes'),
   cueDetailActor:         document.getElementById('cue-detail-actor'),
@@ -1516,6 +1518,11 @@ function updateCompactPlaybackButtons() {
   els.btnBoothTcToggle?.classList.toggle('active', ws.boothTimecodeEnabled);
   els.btnPrerollToggle?.classList.toggle('active', ws.cuePrerollEnabled);
   els.btnGoodTakesPlayback?.classList.toggle('active', goodTakesPlaybackEnabled);
+  if (els.btnGoodTakesPlayback) {
+    els.btnGoodTakesPlayback.title = goodTakesPlaybackEnabled
+      ? 'Good takes context playback on: selected good takes from all cues can play, including overlaps'
+      : 'Play selected good takes from all cues in timeline context';
+  }
   updateLoopButton();
   els.btnDialogueOverlayToggle?.classList.toggle('active', ws.dialogueOverlayEnabled);
   els.btnBeepToggle?.classList.toggle('active', ws.cueBeepVolume > 0);
@@ -2377,7 +2384,37 @@ function getSelectedTakeForCue(cueId) {
 }
 
 function getGoodTakePlaybackTrack(take) {
+  // Context playback is one audible review lane per selected take.
+  // If the operator has chosen an audition mic, use that lane for all
+  // context playback where available; otherwise fall back predictably.
   return getTakeTrackForLane(take, activeAuditionLaneId || 'mic1');
+}
+
+function getGoodTakeContextCandidates(timelineSeconds) {
+  if (!currentProject) return [];
+  const frame = secondsToFrames(timelineSeconds);
+  const candidates = [];
+  const selectedTakes = (currentProject.takes || []).filter(take => take.isSelected);
+
+  for (const take of selectedTakes) {
+    const cue = currentProject.cues?.find(c => c.cueId === take.cueId);
+    if (!cue || frame < cue.inFrames || frame >= cue.outFrames) continue;
+
+    const track = getGoodTakePlaybackTrack(take);
+    if (!track?.filePath) continue;
+
+    const cueInSeconds = framesToSeconds(cue.inFrames);
+    const takeStart = cueInSeconds + getRecordingStartOffsetSecs();
+    if (timelineSeconds < takeStart) continue;
+
+    const offset = Math.max(0, timelineSeconds - takeStart);
+    const duration = Number(track.durationSecs || take.durationSecs || 0);
+    if (duration > 0 && offset > duration + 0.1) continue;
+
+    candidates.push({ take, cue, track, offset });
+  }
+
+  return candidates;
 }
 
 function getTakeTrackForLane(take, laneId) {
@@ -2653,25 +2690,10 @@ async function syncGoodTakesPlayback(timelineSeconds) {
     return;
   }
 
-  const frame = secondsToFrames(timelineSeconds);
   const activeKeys = new Set();
-  const selectedTakes = (currentProject.takes || []).filter(take => take.isSelected);
+  const candidates = getGoodTakeContextCandidates(timelineSeconds);
 
-  for (const take of selectedTakes) {
-    const cue = currentProject.cues?.find(c => c.cueId === take.cueId);
-    if (!cue || frame < cue.inFrames || frame >= cue.outFrames) continue;
-
-    const track = getGoodTakePlaybackTrack(take);
-    if (!track?.filePath) continue;
-
-    const cueInSeconds = framesToSeconds(cue.inFrames);
-    const takeStart = cueInSeconds + getRecordingStartOffsetSecs();
-    if (timelineSeconds < takeStart) continue;
-
-    const offset = Math.max(0, timelineSeconds - takeStart);
-    const duration = Number(track.durationSecs || take.durationSecs || 0);
-    if (duration > 0 && offset > duration + 0.1) continue;
-
+  for (const { take, track, offset } of candidates) {
     const laneId = track.laneId || 'mic1';
     const key = `${take.takeId}:${laneId}:offset:${getRecordingOffsetMs()}`;
     if (take.takeId === activeAuditionTakeId && laneId === activeAuditionLaneId) continue;
@@ -4080,6 +4102,8 @@ function renderCueList() {
     const dialogue  = cue.dialogue?.trim() || '(no dialogue)';
     const preview   = dialogue.length > 40 ? dialogue.slice(0, 38) + '…' : dialogue;
     const completed = cue.status === 'completed';
+    const overlaps = getOverlappingCues(cue);
+    const selectedOverlapCount = overlaps.filter(other => cueHasSelectedTake(other.cueId)).length;
 
     const item = document.createElement('div');
     item.className     = 'cue-item'
@@ -4100,6 +4124,14 @@ function renderCueList() {
       <div class="cue-item-dialogue">${escHtml(preview)}</div>
       <div class="cue-item-timing">${framesToTC(cue.inFrames)} → ${framesToTC(cue.outFrames)}</div>
     `;
+
+    if (overlaps.length) {
+      const chip = document.createElement('span');
+      chip.className = 'cue-overlap-chip';
+      chip.title = `${selectedOverlapCount} overlapping cue(s) have good takes`;
+      chip.textContent = `Overlap ${overlaps.length}${selectedOverlapCount ? ` / ${selectedOverlapCount} good` : ''}`;
+      item.querySelector('.cue-item-timing')?.appendChild(chip);
+    }
 
     // Cue selection: click anywhere on the item EXCEPT the complete toggle
     item.addEventListener('click', (e) => {
@@ -4147,6 +4179,51 @@ function escHtml(str) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // CUE SELECTION
 // ═══════════════════════════════════════════════════════════════════════════════
+
+function cuesOverlap(a, b) {
+  if (!a || !b || a.cueId === b.cueId) return false;
+  return Number(a.inFrames) < Number(b.outFrames) && Number(b.inFrames) < Number(a.outFrames);
+}
+
+function getOverlappingCues(cue) {
+  if (!cue || !currentProject?.cues) return [];
+  return currentProject.cues
+    .filter(other => cuesOverlap(cue, other))
+    .sort((a, b) => a.inFrames - b.inFrames || String(a.cueNumber).localeCompare(String(b.cueNumber)));
+}
+
+function cueHasSelectedTake(cueId) {
+  return !!currentProject?.takes?.some(take => take.cueId === cueId && take.isSelected);
+}
+
+function cueCharacterName(cue) {
+  const character = currentProject?.characters?.find(item => item.characterId === cue?.characterId);
+  return character?.name || '?';
+}
+
+function renderCueOverlapDetail(cue) {
+  if (!els.cueOverlapDetail || !els.cueOverlapList) return;
+  const overlaps = getOverlappingCues(cue);
+  if (!overlaps.length) {
+    els.cueOverlapDetail.classList.add('hidden');
+    els.cueOverlapList.innerHTML = '';
+    return;
+  }
+
+  els.cueOverlapList.innerHTML = overlaps.map(other => {
+    const hasGood = cueHasSelectedTake(other.cueId);
+    const dialogue = other.dialogue?.trim() || '(no dialogue)';
+    return `<button class="cue-overlap-row" data-cue-id="${escHtml(other.cueId)}" title="${escHtml(dialogue)}">
+      <span class="cue-overlap-main">
+        <span class="cue-overlap-number">${escHtml(other.cueNumber)}</span>
+        <span class="cue-overlap-char">${escHtml(cueCharacterName(other))}</span>
+      </span>
+      <span class="cue-overlap-time">${framesToTC(other.inFrames)} â†’ ${framesToTC(other.outFrames)}</span>
+      <span class="cue-overlap-good${hasGood ? ' active' : ''}">${hasGood ? 'Good' : 'No good'}</span>
+    </button>`;
+  }).join('');
+  els.cueOverlapDetail.classList.remove('hidden');
+}
 
 function selectCue(cueId) {
   const cue = currentProject?.cues.find(c => c.cueId === cueId);
@@ -4256,6 +4333,7 @@ function showCueDetail(cue) {
   els.cueDetailIn.textContent  = framesToTC(cue.inFrames);
   els.cueDetailOut.textContent = framesToTC(cue.outFrames);
   els.cueDetailDur.textContent = `${durF} f`;
+  renderCueOverlapDetail(cue);
 
   // Editable fields
   els.cueDetailDialogue.value = cue.dialogue || '';
@@ -5340,6 +5418,11 @@ els.btnCueStatus.addEventListener('click', toggleCueStatus);
 // Cue detail
 els.btnSaveCue.addEventListener('click',   saveCueEdits);
 els.btnDeleteCue.addEventListener('click', deleteCue);
+els.cueOverlapList?.addEventListener('click', (event) => {
+  const row = event.target.closest('.cue-overlap-row');
+  if (!row?.dataset.cueId) return;
+  selectCue(row.dataset.cueId);
+});
 els.cueDetailTakes.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) return;
@@ -5460,8 +5543,14 @@ els.btnPrerollToggle?.addEventListener('click', () => {
 els.btnGoodTakesPlayback?.addEventListener('click', () => {
   goodTakesPlaybackEnabled = !goodTakesPlaybackEnabled;
   if (!goodTakesPlaybackEnabled) stopGoodTakesPlayback();
+  if (goodTakesPlaybackEnabled && isPlaying) {
+    syncGoodTakesPlayback(els.videoPlayer.currentTime || 0).catch(() => {});
+  }
   updateCompactPlaybackButtons();
-  setStatusInfo(goodTakesPlaybackEnabled ? 'Good takes playback on.' : 'Good takes playback off.');
+  const laneNote = activeAuditionLaneId ? ` using ${activeAuditionLaneId}` : '';
+  setStatusInfo(goodTakesPlaybackEnabled
+    ? `Good takes context playback on${laneNote}.`
+    : 'Good takes context playback off.');
 });
 
 els.btnDialogueOverlayToggle?.addEventListener('click', () => {

@@ -115,7 +115,7 @@
         </div>
         <div class="strip-divider"></div>
         <div class="strip-group strip-playback-toggles">
-          <button class="btn btn-transport btn-strip-toggle" id="btn-good-takes-playback" title="Play all selected good takes">Good</button>
+          <button class="btn btn-transport btn-strip-toggle" id="btn-good-takes-playback" title="Play selected good takes from all cues in timeline context">Good</button>
           <button class="btn btn-transport btn-strip-toggle" id="btn-booth-tc-toggle" title="Booth timecode">TC</button>
           <button class="btn btn-transport btn-strip-toggle btn-dx-overlay" id="btn-dialogue-overlay-toggle" title="Dialogue overlay">DX Overlay</button>
           <div class="dx-overlay-inline hidden" id="dx-overlay-inline">
@@ -495,6 +495,10 @@
               <span class="cue-timing-label">Dur</span>
               <span class="cue-timing-value field-mono" id="cue-detail-dur">—</span>
             </span>
+          </div>
+          <div class="cue-detail-row cue-overlap-detail hidden" id="cue-overlap-detail">
+            <label class="cue-detail-label">Overlapping Cues</label>
+            <div class="cue-overlap-list" id="cue-overlap-list"></div>
           </div>
           <!-- Dialogue -->
           <div class="cue-detail-row">
