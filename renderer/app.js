@@ -1727,7 +1727,7 @@ function runPreroll(onComplete) {
   cancelPreroll();
   isPrerolling = true;
 
-  const nativeBeepTarget = getNativeGuidePlaybackTarget();
+  const nativeBeepTarget = getNativePrerollTarget();
   const useNativeBeeps = nativeDeviceOpen && nativeBeepTarget !== 'none';
   const useBrowserBeeps = !nativeDeviceOpen && nativeBeepTarget !== 'none';
   const ctx = useBrowserBeeps ? getAudioCtx() : null;
@@ -2485,11 +2485,7 @@ function getNativePlaybackTarget() {
   return 'none';
 }
 
-function getNativeTakeReviewTarget() {
-  return getNativeGuidePlaybackTarget();
-}
-
-function getNativeGuidePlaybackTarget() {
+function getNativeSharedCueTarget() {
   const outputMap = getLiveAudioOutputMap();
   const hasControl = outputMap.controlLeft >= 0 && outputMap.controlRight >= 0;
   const hasBooth = outputMap.boothLeft >= 0 && outputMap.boothRight >= 0;
@@ -2497,6 +2493,27 @@ function getNativeGuidePlaybackTarget() {
   if (hasControl) return 'control';
   if (hasBooth) return 'booth';
   return 'none';
+}
+
+function getNativeGuidePlaybackTarget() {
+  // Guide is shared cueing material for both operator and actor whenever both
+  // routes exist. If only one route is assigned, follow the remaining route.
+  return getNativeSharedCueTarget();
+}
+
+function getNativePrerollTarget() {
+  // Beeps/countdown belong to the cueing feed, so they follow guide routing.
+  return getNativeSharedCueTarget();
+}
+
+function getNativeTakeReviewTarget() {
+  // Audition and selected-good playback are review material tied to the cueing
+  // experience, so they intentionally follow the same routing policy as guide.
+  return getNativeSharedCueTarget();
+}
+
+function getNativeGoodTakeContextTarget() {
+  return getNativeTakeReviewTarget();
 }
 
 function stopNativeGuidePlayback() {
@@ -2729,7 +2746,7 @@ async function syncGoodTakesPlayback(timelineSeconds) {
     stopGoodTakesPlayback();
     return;
   }
-  const target = getNativeTakeReviewTarget();
+  const target = getNativeGoodTakeContextTarget();
   if (target === 'none') {
     stopGoodTakesPlayback();
     return;
