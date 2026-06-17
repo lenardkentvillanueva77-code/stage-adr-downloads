@@ -909,7 +909,7 @@ async function openSelectedAudioEngineDevice() {
       if (capability.mode !== 'studio') configureNativeTalkback(false);
       applyMonitorState();
       prepareNativeGuideAudio().catch(err => setStatusWarn('Native guide prepare failed: ' + err.message));
-      if (isPlaying) syncNativeGuidePlayback(els.videoPlayer.currentTime || 0, true).catch(() => {});
+      if (isPlaying) resyncPlaybackTargetsForCurrentTimeline().catch(() => {});
       updateNativeTalkbackButton();
     } else {
       els.audioEngineRoutingStatus.textContent = `${capability.label} unavailable`;
@@ -958,6 +958,7 @@ async function openSelectedAudioEngineDiagnostic() {
       configureNativeMonitoring();
       applyMonitorState();
       prepareNativeGuideAudio().catch(err => setStatusWarn('Native guide prepare failed: ' + err.message));
+      if (isPlaying) resyncPlaybackTargetsForCurrentTimeline().catch(() => {});
       updateNativeTalkbackButton();
     } else {
       els.audioEngineRoutingStatus.textContent = 'Diagnostic unavailable';
@@ -1175,8 +1176,7 @@ async function configureNativeRouting() {
     }
     renderAudioEngineRouteMap();
     if (isPlaying) {
-      stopNativeGuidePlayback();
-      syncNativeGuidePlayback(els.videoPlayer.currentTime || 0, true).catch(() => {});
+      resyncPlaybackTargetsForCurrentTimeline().catch(() => {});
     }
   } catch (err) {
     if (isAudioEngineLoss(err.message)) {
@@ -2786,6 +2786,28 @@ async function syncGoodTakesPlayback(timelineSeconds) {
     if (activeKeys.has(key) && nativeDeviceOpen) continue;
     window.api.audioEngine.stopPlayback({ playbackId }).catch(() => {});
     nativeGoodTakePlayback.delete(playbackId);
+  }
+}
+
+async function resyncPlaybackTargetsForCurrentTimeline({
+  guide = true,
+  review = true,
+  goodTakes = true,
+} = {}) {
+  if (!isPlaying) return;
+  const timelineSeconds = els.videoPlayer.currentTime || 0;
+
+  if (guide) {
+    stopNativeGuidePlayback();
+    await syncNativeGuidePlayback(timelineSeconds, true);
+  }
+  if (review) {
+    stopReviewPlayback();
+    await syncReviewPlayback(timelineSeconds);
+  }
+  if (goodTakes) {
+    stopGoodTakesPlayback();
+    await syncGoodTakesPlayback(timelineSeconds);
   }
 }
 
@@ -5365,10 +5387,6 @@ els.audioEngineTalkbackSource.addEventListener('change', () => {
   applyMonitorState();
   saveNativeAudioSetup().catch(err => setStatusWarn('Audio setup save failed: ' + err.message));
   configureNativeRouting().then(() => configureNativeMonitoring());
-  if (isPlaying) {
-    stopNativeGuidePlayback();
-    syncNativeGuidePlayback(els.videoPlayer.currentTime || 0, true).catch(() => {});
-  }
 }));
 els.btnAudioEngineTalkback.addEventListener('pointerdown', (event) => {
   event.preventDefault();
@@ -5486,12 +5504,20 @@ els.cueDetailTakes.addEventListener('click', (event) => {
     if (!isTakesTrackAudible()) {
       stopReviewPlayback();
       stopGoodTakesPlayback();
+    } else if (isPlaying) {
+      resyncPlaybackTargetsForCurrentTimeline({ guide: false }).catch(() => {});
     }
   }
 
   if (target.dataset.action === 'toggle-takes-solo') {
     takesTrackSoloed = !takesTrackSoloed;
     applyMonitorState();
+    if (!isTakesTrackAudible()) {
+      stopReviewPlayback();
+      stopGoodTakesPlayback();
+    } else if (isPlaying) {
+      resyncPlaybackTargetsForCurrentTimeline({ guide: false }).catch(() => {});
+    }
   }
 });
 
