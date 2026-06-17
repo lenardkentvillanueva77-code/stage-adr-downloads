@@ -55,9 +55,23 @@ installSafeConsole();
 
 let mainWindow  = null;
 let boothWindow = null;
+let splashWindow = null;
+let splashOpenedAt = 0;
+
+const SPLASH_MIN_DURATION_MS = 1200;
 
 function getWindow()      { return mainWindow;  }
 function getBoothWindow() { return boothWindow; }
+
+function closeSplashWindow() {
+  if (!splashWindow || splashWindow.isDestroyed()) {
+    splashWindow = null;
+    return;
+  }
+
+  splashWindow.destroy();
+  splashWindow = null;
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.exit(0);
@@ -71,6 +85,34 @@ app.on('second-instance', () => {
 
 // ── Main window ───────────────────────────────────────────────────────────────
 
+function createSplashWindow() {
+  splashOpenedAt = Date.now();
+  splashWindow = new BrowserWindow({
+    width: 640,
+    height: 360,
+    frame: false,
+    resizable: false,
+    movable: true,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    skipTaskbar: true,
+    autoHideMenuBar: true,
+    show: true,
+    backgroundColor: '#0b0b0b',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  splashWindow.loadFile(path.join(__dirname, 'renderer', 'splash.html'));
+  splashWindow.on('closed', () => {
+    splashWindow = null;
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width:           1400,
@@ -80,6 +122,7 @@ function createWindow() {
     backgroundColor: '#111111',
     titleBarStyle:   process.platform === 'darwin' ? 'hiddenInset' : 'default',
     title:           'Post ADR Pro',
+    show:            false,
     webPreferences:  {
       preload:          path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -89,6 +132,20 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+
+  const revealMainWindow = () => {
+    const waitMs = Math.max(0, SPLASH_MIN_DURATION_MS - (Date.now() - splashOpenedAt));
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      closeSplashWindow();
+      if (mainWindow.isVisible()) return;
+      mainWindow.show();
+      mainWindow.focus();
+    }, waitMs);
+  };
+
+  mainWindow.once('ready-to-show', revealMainWindow);
+  mainWindow.webContents.once('did-finish-load', revealMainWindow);
 
   // Intercept close: ask renderer to handle unsaved-changes prompt first.
   // _allowClose is managed by projectHandlers.getAllowClose().
@@ -101,6 +158,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    closeSplashWindow();
     projectHandlers.setAllowClose(false);
     if (boothWindow && !boothWindow.isDestroyed()) {
       boothWindow.destroy();
@@ -335,6 +393,7 @@ app.whenReady().then(() => {
 
   registerIpcHandlers();
   buildMenu();
+  createSplashWindow();
   createWindow();
 
   app.on('activate', () => {
