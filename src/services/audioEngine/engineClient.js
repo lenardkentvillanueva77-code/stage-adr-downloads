@@ -22,6 +22,13 @@ function resolveEnginePath() {
     ? 'PostAdrAudioEngine.exe'
     : 'PostAdrAudioEngine';
 
+  if (process.resourcesPath) {
+    const packagedPath = path.join(process.resourcesPath, 'native-audio', exeName);
+    try {
+      if (require('fs').existsSync(packagedPath)) return packagedPath;
+    } catch {}
+  }
+
   return path.join(
     __dirname,
     '..',

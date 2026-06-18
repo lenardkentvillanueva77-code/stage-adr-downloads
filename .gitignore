@@ -5,6 +5,7 @@ node_modules/
 dist/
 out/
 release/
+SP ADR BETA RELEASE/
 *.asar
 
 # Native build outputs
