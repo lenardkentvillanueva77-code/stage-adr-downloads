@@ -149,6 +149,7 @@ contextBridge.exposeInMainWorld('api', {
      */
     adrListCsv: ()     => ipcRenderer.invoke('export:adrListCsv'),
     adrSessionReport: () => ipcRenderer.invoke('export:adrSessionReport'),
+    remoteCueManifest: () => ipcRenderer.invoke('export:remoteCueManifest'),
     goodTakesPackage: (opts) => ipcRenderer.invoke('export:goodTakesPackage', opts),
   },
 
@@ -171,6 +172,7 @@ contextBridge.exposeInMainWorld('api', {
       loadVideo:     (cb) => ipcRenderer.on('menu:load-video',      cb),
       manageActors:  (cb) => ipcRenderer.on('menu:manage-actors',   cb),
       exportReport:  (cb) => ipcRenderer.on('menu:export-report',   cb),
+      exportRemoteCueManifest: (cb) => ipcRenderer.on('menu:export-remote-cue-manifest', cb),
       exportGoodTakesPackage: (cb) => ipcRenderer.on('menu:export-good-takes-package', cb),
       exportCsv:     (cb) => ipcRenderer.on('menu:export-csv',      cb),
       exportPdf:     (cb) => ipcRenderer.on('menu:export-pdf',      cb),

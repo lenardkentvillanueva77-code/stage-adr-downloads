@@ -22,6 +22,10 @@ const {
   generateAdrSessionReportCsv,
   generateAdrSessionReportJson,
 } = require('../services/export/adrSessionReport');
+const {
+  generateRemoteCueManifestCsv,
+  generateRemoteCueManifestJson,
+} = require('../services/export/remoteCueManifest');
 const { exportGoodTakesPackage } = require('../services/export/goodTakesPackage');
 const { getProject }          = require('./projectHandlers');
 
@@ -139,6 +143,50 @@ function register(ipcMain, getWindow) {
     }
 
     return { success: true, folderPath: reportDir, csvPath, jsonPath };
+  });
+
+  ipcMain.handle('export:remoteCueManifest', async (_event) => {
+    const project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+
+    const projectName = safeName(project.projectName, 'ADR_Project');
+    const win = getWindow();
+    const saveResult = await dialog.showOpenDialog(win, {
+      title: 'Export Remote Cue Manifest Folder',
+      defaultPath: getExportsPath(project) || undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (saveResult.canceled || !saveResult.filePaths?.[0]) {
+      return { success: false, error: 'Export cancelled.' };
+    }
+
+    const manifestDir = path.join(saveResult.filePaths[0], `${projectName}_Remote_Cue_Manifest`);
+    fs.mkdirSync(manifestDir, { recursive: true });
+
+    const csvPath = path.join(manifestDir, `${projectName}_Remote_Cue_Manifest.csv`);
+    const jsonPath = path.join(manifestDir, `${projectName}_Remote_Cue_Manifest.json`);
+
+    try {
+      fs.writeFileSync(csvPath, generateRemoteCueManifestCsv({ project }));
+      fs.writeFileSync(jsonPath, generateRemoteCueManifestJson({ project }));
+    } catch (err) {
+      console.error('[exportHandlers] Remote cue manifest failed:', err);
+      return { success: false, error: `Remote cue manifest failed: ${err.message}` };
+    }
+
+    const assignedCueCount = (project.cues || []).filter(cue => {
+      const actor = (project.actors || []).find(item => item.actorId === cue.actorId);
+      return !!actor?.email;
+    }).length;
+
+    return {
+      success: true,
+      folderPath: manifestDir,
+      csvPath,
+      jsonPath,
+      cueCount: (project.cues || []).length,
+      assignedCueCount,
+    };
   });
 
   ipcMain.handle('export:goodTakesPackage', async (_event, opts = {}) => {

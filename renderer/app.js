@@ -5000,6 +5000,21 @@ async function submitExportReport() {
 }
 // ═══════════════════════════════════════════════════════════════════════════════
 
+async function submitExportRemoteCueManifest() {
+  if (!currentProject) return;
+  setStatusInfo('Exporting remote cue manifest...');
+  const result = await window.api.export.remoteCueManifest();
+  if (!result.success) {
+    if (result.error !== 'Export cancelled.') setStatusError(`Remote cue manifest export failed: ${result.error}`);
+    else setStatusInfo('Export cancelled.');
+    return;
+  }
+
+  const cueCount = Number(result.cueCount || 0);
+  const assignedCueCount = Number(result.assignedCueCount || 0);
+  setStatusOk(`Remote cue manifest exported (${assignedCueCount}/${cueCount} cue${cueCount === 1 ? '' : 's'} assigned): ${result.folderPath}`);
+}
+
 function showExportResultModal(result, exportOffsetMs) {
   const stems = Array.isArray(result.renderedFiles) ? result.renderedFiles : [];
   const missing = Array.isArray(result.missingFiles) ? result.missingFiles : [];
@@ -6306,6 +6321,7 @@ window.api.onMenu.manageActors?.(() => {
   if (currentProject) showActorModal();
 });
 window.api.onMenu.exportGoodTakesPackage?.(() => submitExportGoodTakesPackage());
+window.api.onMenu.exportRemoteCueManifest?.(() => submitExportRemoteCueManifest());
 window.api.onMenu.exportReport( () => submitExportReport());
 window.api.onMenu.exportCsv(    () => submitExportCsv());
 window.api.onMenu.exportPdf(    () => showExportModal());
