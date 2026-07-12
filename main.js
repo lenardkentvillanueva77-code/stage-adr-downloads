@@ -297,6 +297,8 @@ function buildMenu() {
         { label: 'Playback Settings...', click: () => mainWindow?.webContents.send('menu:show-playback-settings') },
         { label: 'Audio I/O...', click: () => mainWindow?.webContents.send('menu:show-audio-io') },
         { label: 'Session...', click: () => mainWindow?.webContents.send('menu:show-session-settings') },
+        { type: 'separator' },
+        { label: 'Keyboard Shortcuts...', click: () => mainWindow?.webContents.send('menu:show-keyboard-shortcuts') },
       ],
     },
     {

@@ -157,6 +157,7 @@
 
       <!-- ── Timeline Area ─────────────────────────────────────────────────── -->
       <div class="timeline-area" id="timeline-area">
+        <div class="timeline-resize-handle" id="timeline-resize-handle" title="Resize waveform area" role="separator" aria-orientation="horizontal" aria-label="Resize waveform area" aria-valuemin="80" aria-valuemax="420" tabindex="0"></div>
         <div class="waveform-audio-controls">
           <span class="track-monitor-label">Video Audio</span>
           <button class="track-monitor-btn" id="video-track-mute" title="Mute video audio">M</button>
@@ -736,6 +737,26 @@
   </div>
 
   <!-- ── Actor Manager Modal ───────────────────────────────────────────────── -->
+  <div class="modal-overlay hidden" id="modal-keyboard-shortcuts">
+    <div class="modal modal-wide modal-shortcuts">
+      <div class="modal-header">
+        <span class="modal-title">Keyboard Shortcuts</span>
+      </div>
+      <div class="modal-body shortcuts-body">
+        <div class="shortcuts-hint" id="shortcuts-hint">Click a keyboard shortcut or MIDI Learn, then press the new control.</div>
+        <div class="shortcuts-toolbar">
+          <button class="btn btn-ghost" id="btn-midi-enable">Enable MIDI</button>
+          <span class="shortcuts-midi-status" id="midi-status">MIDI not enabled</span>
+        </div>
+        <div class="shortcuts-list" id="shortcuts-list"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-shortcuts-reset">Reset Defaults</button>
+        <button class="btn btn-primary" id="btn-shortcuts-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay hidden" id="modal-actors">
     <div class="modal modal-wide">
       <div class="modal-header">

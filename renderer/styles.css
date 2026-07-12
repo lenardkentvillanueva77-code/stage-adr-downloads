@@ -61,6 +61,7 @@
   --sidebar-info-width:        240px;
   --sidebar-cues-width:        300px;
   --sidebar-takes-width:       330px;
+  --timeline-resize-height:    6px;
   --timeline-controls-height:  30px;
   --ruler-height:              22px;
   --waveform-height:           110px;
@@ -687,9 +688,37 @@ body { display: flex; flex-direction: column; height: 100vh; }
   border-top: 1px solid var(--border-subtle);
   user-select: none;
 }
+.timeline-resize-handle {
+  flex: 0 0 var(--timeline-resize-height);
+  position: relative;
+  z-index: 35;
+  cursor: ns-resize;
+  background: linear-gradient(to bottom, rgba(255,255,255,0.08), rgba(255,255,255,0.01));
+  border-top: 1px solid rgba(255,255,255,0.10);
+  border-bottom: 1px solid rgba(0,0,0,0.45);
+}
+.timeline-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 46px;
+  height: 2px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: rgba(232,232,232,0.22);
+}
+.timeline-resize-handle:hover::after,
+.timeline-resize-handle:focus-visible::after {
+  background: rgba(232,232,232,0.42);
+}
+body.timeline-resizing {
+  cursor: ns-resize;
+  user-select: none;
+}
 .waveform-audio-controls {
   position: absolute;
-  top: calc(var(--ruler-height) + 10px);
+  top: calc(var(--timeline-resize-height) + var(--ruler-height) + 10px);
   left: 5px;
   z-index: 30;
   display: flex;
@@ -706,7 +735,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
 .guide-audio-status {
   position: absolute;
   left: 42px;
-  top: calc(var(--ruler-height) + 10px);
+  top: calc(var(--timeline-resize-height) + var(--ruler-height) + 10px);
   z-index: 30;
   padding: 2px 6px;
   border: 1px solid rgba(255,255,255,0.08);
@@ -738,7 +767,7 @@ body { display: flex; flex-direction: column; height: 100vh; }
 
 .timeline-controls {
   position: absolute;
-  top: calc(var(--ruler-height) + 8px);
+  top: calc(var(--timeline-resize-height) + var(--ruler-height) + 8px);
   right: 12px;
   z-index: 30;
   display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
@@ -1926,6 +1955,80 @@ button:focus-visible {
 .modal-overlay.hidden { display: none; }
 .modal { background: var(--bg-modal); border: 1px solid var(--border-mid); border-radius: var(--radius-lg); width: 400px; max-width: 90vw; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
 .modal-wide { width: 560px; }
+.modal-shortcuts {
+  width: 720px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.shortcuts-body {
+  max-height: 60vh;
+  overflow: hidden;
+}
+.shortcuts-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.shortcuts-hint.warning {
+  color: var(--accent-orange);
+}
+.shortcuts-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shortcuts-midi-status {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.shortcuts-midi-status.ready { color: var(--accent-green); }
+.shortcuts-midi-status.warning { color: var(--accent-orange); }
+.shortcuts-list {
+  border: 1px solid var(--border-subtle);
+  overflow-y: auto;
+  max-height: 52vh;
+}
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 120px 50px 150px 50px;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.shortcut-row:last-child { border-bottom: 0; }
+.shortcut-group {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.shortcut-label {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shortcut-capture {
+  justify-content: center;
+  min-height: 24px;
+  font-family: var(--font-mono);
+}
+.shortcut-capture.capturing,
+.midi-learn.capturing {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+.shortcut-clear,
+.midi-clear {
+  min-height: 24px;
+}
+.midi-learn {
+  justify-content: center;
+  min-height: 24px;
+  font-family: var(--font-mono);
+}
 .modal-project-info {
   width: 560px;
   max-height: 86vh;

@@ -181,6 +181,7 @@ contextBridge.exposeInMainWorld('api', {
       showPlaybackSettings: (cb) => ipcRenderer.on('menu:show-playback-settings', cb),
       showAudioIo:    (cb) => ipcRenderer.on('menu:show-audio-io', cb),
       showSessionSettings: (cb) => ipcRenderer.on('menu:show-session-settings', cb),
+      showKeyboardShortcuts: (cb) => ipcRenderer.on('menu:show-keyboard-shortcuts', cb),
     },
 
   // ── App events (main → renderer) ────────────────────────────────────────────

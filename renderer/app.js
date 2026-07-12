@@ -166,6 +166,7 @@ const wsDefaults = {
   cueBeepType:             'beep',
   recordingOffsetMs:       0,
   recordMode:              'normal',
+  waveformHeightPx:        110,
   audioOutputMap:          { controlLeft: 0, controlRight: 1, boothLeft: 2, boothRight: 3 },
   audioLaneNames:          { mic1: 'Mic 1', mic2: 'Mic 2' },
   nativeAudioSetup:        {
@@ -188,6 +189,8 @@ let zoomIndex  = 0;
 let canvasWidth  = 0;
 let canvasHeight = 0;
 let waveformVisualScale = 0.35;
+const WAVEFORM_AREA_MIN_HEIGHT = 80;
+const WAVEFORM_AREA_MAX_HEIGHT = 420;
 
 // Scrollbar drag
 let isScrollDragging  = false;
@@ -269,6 +272,7 @@ const els = {
   waveformProgressPct:    document.getElementById('waveform-progress-pct'),
 
   // Video
+  videoSection:           document.querySelector('.video-section'),
   videoPlaceholder:       document.getElementById('video-placeholder'),
   videoPlayer:            document.getElementById('video-player'),
   videoTrackMute:         document.getElementById('video-track-mute'),
@@ -294,6 +298,8 @@ const els = {
   prerollDot3:            document.getElementById('preroll-dot-3'),
 
   // Timeline
+  timelineArea:            document.getElementById('timeline-area'),
+  timelineResizeHandle:    document.getElementById('timeline-resize-handle'),
   waveformPlaceholder:    document.getElementById('waveform-placeholder'),
   btnGenerateWaveform:    document.getElementById('btn-generate-waveform'),
   timelineControls:       document.getElementById('timeline-controls'),
@@ -393,6 +399,13 @@ const els = {
   beepTypeSelect:         document.getElementById('beep-type-select'),
   beepModalVolume:        document.getElementById('beep-modal-volume'),
   btnBeepModalClose:      document.getElementById('btn-beep-modal-close'),
+  modalKeyboardShortcuts:  document.getElementById('modal-keyboard-shortcuts'),
+  shortcutsList:          document.getElementById('shortcuts-list'),
+  shortcutsHint:          document.getElementById('shortcuts-hint'),
+  midiStatus:             document.getElementById('midi-status'),
+  btnMidiEnable:          document.getElementById('btn-midi-enable'),
+  btnShortcutsReset:      document.getElementById('btn-shortcuts-reset'),
+  btnShortcutsClose:      document.getElementById('btn-shortcuts-close'),
   overlaySubSettings:     document.getElementById('overlay-sub-settings'),
   overlayColorPicker:     document.getElementById('overlay-color-picker'),
   overlayFontSize:        document.getElementById('overlay-font-size'),
@@ -1065,7 +1078,7 @@ function updateNativeIoStatus(meters) {
 
 function updateNativeRecordButtons(deviceOpen) {
   const armedLanes = getArmedNativeRecordLanes();
-  const canRecord = !!deviceOpen && !nativeRecordingActive && armedLanes.length > 0;
+  const canRecord = !!deviceOpen && !nativeRecordingActive && armedLanes.length > 0 && !getNativeRecordLaneConflict(armedLanes);
   els.btnNativeRecordStart.disabled = !canRecord;
   els.btnNativeRecordStop.disabled = !nativeRecordingActive;
   updateNativeLaneButtons();
@@ -1131,6 +1144,25 @@ function getArmedNativeRecordLanes() {
   ];
 
   return lanes.filter(lane => lane.armed && Number.isInteger(lane.physicalInput) && lane.physicalInput >= 0);
+}
+
+function getNativeInputDisplayName(inputIndex) {
+  const device = getSelectedNativeDevice();
+  const inputNames = Array.isArray(device?.inputChannelNames) ? device.inputChannelNames : [];
+  return `${inputIndex + 1}: ${inputNames[inputIndex] || `Input ${inputIndex + 1}`}`;
+}
+
+function getNativeRecordLaneConflict(lanes = getArmedNativeRecordLanes()) {
+  const seen = new Map();
+  for (const lane of lanes) {
+    if (!seen.has(lane.physicalInput)) {
+      seen.set(lane.physicalInput, lane);
+      continue;
+    }
+    const other = seen.get(lane.physicalInput);
+    return `${other.label} and ${lane.label} are both assigned to ${getNativeInputDisplayName(lane.physicalInput)}. Change one source or disarm one lane.`;
+  }
+  return '';
 }
 
 function getNativeMonitorLanes() {
@@ -1278,6 +1310,13 @@ async function startNativeInputRecording() {
       updateNativeRecordButtons(nativeDeviceOpen);
       return;
     }
+    const laneConflict = getNativeRecordLaneConflict(lanes);
+    if (laneConflict) {
+      els.audioEngineRecordStatus.textContent = 'Input conflict';
+      updateNativeRecordButtons(nativeDeviceOpen);
+      setStatusError(laneConflict);
+      return;
+    }
 
     const response = await window.api.audioEngine.startRecording({ lanes });
     const result = response.result || {};
@@ -1413,6 +1452,7 @@ function loadWorkspaceSettings() {
     cueBeepType:             saved.cueBeepType             ?? wsDefaults.cueBeepType,
     recordingOffsetMs:       saved.recordingOffsetMs       ?? wsDefaults.recordingOffsetMs,
     recordMode:              saved.recordMode              ?? wsDefaults.recordMode,
+    waveformHeightPx:        clampWaveformAreaHeight(saved.waveformHeightPx ?? wsDefaults.waveformHeightPx),
     audioOutputMap:          {
       ...wsDefaults.audioOutputMap,
       ...(saved.audioOutputMap || {}),
@@ -1453,6 +1493,27 @@ async function saveWorkspaceSettings({ persist = false } = {}) {
     console.warn('[workspace] Could not sync workspace settings:', err.message);
   }
   // Written to disk on the next explicit project:save or autosave snapshot.
+}
+
+function getWaveformAreaMaxHeight() {
+  const videoSectionHeight = els.videoSection?.getBoundingClientRect?.().height || window.innerHeight;
+  const dynamicMax = Math.floor(videoSectionHeight * 0.45);
+  return Math.max(WAVEFORM_AREA_MIN_HEIGHT, Math.min(WAVEFORM_AREA_MAX_HEIGHT, dynamicMax));
+}
+
+function clampWaveformAreaHeight(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return wsDefaults.waveformHeightPx;
+  return Math.max(WAVEFORM_AREA_MIN_HEIGHT, Math.min(getWaveformAreaMaxHeight(), Math.round(numericValue)));
+}
+
+function applyWaveformAreaHeight(value) {
+  const nextHeight = clampWaveformAreaHeight(value);
+  ws.waveformHeightPx = nextHeight;
+  document.documentElement.style.setProperty('--waveform-height', `${nextHeight}px`);
+  els.timelineResizeHandle?.setAttribute('aria-valuenow', String(nextHeight));
+  els.timelineResizeHandle?.setAttribute('aria-valuemax', String(getWaveformAreaMaxHeight()));
+  if (peakData) renderAll();
 }
 
 function getRecordingOffsetMs() {
@@ -1526,6 +1587,7 @@ function applyWorkspaceSettingsToUI() {
   // Volume sliders
   els.settingPlaybackVolume.value  = ws.playbackVolume;
   if (els.waveformVideoVolume) els.waveformVideoVolume.value = ws.playbackVolume;
+  applyWaveformAreaHeight(ws.waveformHeightPx);
   els.settingPlaybackVolPct.textContent = Math.round(ws.playbackVolume * 100) + '%';
   els.settingBeepVolume.value      = ws.cueBeepVolume;
   els.settingBeepVolPct.textContent = Math.round(ws.cueBeepVolume * 100) + '%';
@@ -1578,6 +1640,21 @@ function updateCompactPlaybackButtons() {
   els.dxOverlayInline?.querySelectorAll('.dx-size-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.size === ws.dialogueOverlayFontSize);
   });
+}
+
+function setPlaybackVolume(value, { persist = true } = {}) {
+  const v = Math.max(0, Math.min(1, Number(value)));
+  if (!Number.isFinite(v)) return;
+  ws.playbackVolume = v;
+  els.settingPlaybackVolume.value = v;
+  if (els.waveformVideoVolume) els.waveformVideoVolume.value = v;
+  els.settingPlaybackVolPct.textContent = Math.round(v * 100) + '%';
+  applyMonitorState();
+  if (isPlaying) syncNativeGuidePlayback(els.videoPlayer.currentTime || 0, true).catch(() => {});
+  if (persist) {
+    saveWorkspaceSettings();
+    markUnsaved();
+  }
 }
 
 function hasAnySoloedTrack() {
@@ -3130,7 +3207,11 @@ function getPendingTakeDirectory(mediaPath) {
 }
 
 async function startSelectedCueRecord() {
-  if (!selectedCueId || transportState !== 'CUE_READY') return;
+  if (!selectedCueId) return;
+  if (transportState === 'IDLE') _setTransportState('CUE_READY');
+  if (transportState !== 'CUE_READY') {
+    return setStatusWarn('Stop playback before recording the selected cue.');
+  }
   const cue = currentProject?.cues?.find(c => c.cueId === selectedCueId);
   if (!cue) return setStatusError('Cue not found for recording.');
   regionInFrames = cue.inFrames;
@@ -3152,6 +3233,8 @@ async function startPendingCueRecording() {
   if (!mediaPath) return setStatusError('Project must be saved before recording.');
   const lanes = getArmedNativeRecordLanes();
   if (!lanes.length) return setStatusError('Arm at least one native mic lane before recording.');
+  const laneConflict = getNativeRecordLaneConflict(lanes);
+  if (laneConflict) throw new Error(laneConflict);
 
   const startSecs = els.videoPlayer.currentTime || 0;
   const startFrame = secondsToFrames(startSecs);
@@ -3287,6 +3370,10 @@ async function attachPendingRecordingToCue(cue) {
 }
 
 function handleRecordCommand() {
+  if (!currentProject || els.videoPlayer.readyState < 1) {
+    setStatusWarn('Load a video before recording.');
+    return;
+  }
   if (recordArmed) {
     disarmRecord();
     return;
@@ -3305,7 +3392,9 @@ function handleRecordCommand() {
   }
   if (transportState === 'IDLE') {
     armRecord();
+    return;
   }
+  setStatusWarn('Record is available from idle, selected cue, or punch-in playback.');
 }
 
 function showRecordModeMenu(x, y) {
@@ -3531,6 +3620,11 @@ async function _beginNativeRecordingTake(cueOutSecs, cueDurationSecs) {
   const lanes = getArmedNativeRecordLanes();
   if (!lanes.length) {
     setStatusError('Arm at least one native mic lane before recording.');
+    _abortCurrentTake(); return;
+  }
+  const laneConflict = getNativeRecordLaneConflict(lanes);
+  if (laneConflict) {
+    setStatusError(laneConflict);
     _abortCurrentTake(); return;
   }
 
@@ -5132,6 +5226,64 @@ const resizeObserver = new ResizeObserver(() => {
 });
 resizeObserver.observe(els.waveformWrap);
 
+let timelineResizeStartY = 0;
+let timelineResizeStartHeight = wsDefaults.waveformHeightPx;
+
+function setTimelineResizeHeightFromPointer(clientY) {
+  const deltaY = timelineResizeStartY - clientY;
+  applyWaveformAreaHeight(timelineResizeStartHeight + deltaY);
+}
+
+function commitWaveformAreaHeight() {
+  applyWaveformAreaHeight(ws.waveformHeightPx);
+  saveWorkspaceSettings({ persist: true }).catch(() => {});
+}
+
+els.timelineResizeHandle?.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  timelineResizeStartY = e.clientY;
+  timelineResizeStartHeight = ws.waveformHeightPx || wsDefaults.waveformHeightPx;
+  document.body.classList.add('timeline-resizing');
+  els.timelineResizeHandle.setPointerCapture(e.pointerId);
+});
+
+els.timelineResizeHandle?.addEventListener('pointermove', (e) => {
+  if (!els.timelineResizeHandle.hasPointerCapture(e.pointerId)) return;
+  setTimelineResizeHeightFromPointer(e.clientY);
+});
+
+els.timelineResizeHandle?.addEventListener('pointerup', (e) => {
+  if (els.timelineResizeHandle.hasPointerCapture(e.pointerId)) {
+    els.timelineResizeHandle.releasePointerCapture(e.pointerId);
+  }
+  document.body.classList.remove('timeline-resizing');
+  commitWaveformAreaHeight();
+});
+
+els.timelineResizeHandle?.addEventListener('pointercancel', (e) => {
+  if (els.timelineResizeHandle.hasPointerCapture(e.pointerId)) {
+    els.timelineResizeHandle.releasePointerCapture(e.pointerId);
+  }
+  document.body.classList.remove('timeline-resizing');
+  commitWaveformAreaHeight();
+});
+
+els.timelineResizeHandle?.addEventListener('keydown', (e) => {
+  if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+  e.preventDefault();
+  const step = e.shiftKey ? 30 : 10;
+  if (e.key === 'ArrowUp') applyWaveformAreaHeight((ws.waveformHeightPx || wsDefaults.waveformHeightPx) + step);
+  if (e.key === 'ArrowDown') applyWaveformAreaHeight((ws.waveformHeightPx || wsDefaults.waveformHeightPx) - step);
+  if (e.key === 'Home') applyWaveformAreaHeight(WAVEFORM_AREA_MIN_HEIGHT);
+  if (e.key === 'End') applyWaveformAreaHeight(getWaveformAreaMaxHeight());
+  commitWaveformAreaHeight();
+});
+
+window.addEventListener('resize', () => {
+  applyWaveformAreaHeight(ws.waveformHeightPx || wsDefaults.waveformHeightPx);
+});
+
 function setWaveformVisualScaleFromClientY(clientY) {
   const rect = els.waveformScaleControl.getBoundingClientRect();
   const ratio = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
@@ -5706,6 +5858,43 @@ els.modalBeepSettings?.addEventListener('click', e => {
   if (e.target === els.modalBeepSettings) els.modalBeepSettings.classList.add('hidden');
 });
 
+els.shortcutsList?.addEventListener('click', event => {
+  const row = event.target.closest('.shortcut-row');
+  if (!row?.dataset.commandId) return;
+  if (event.target.closest('[data-action="capture-shortcut"]')) {
+    shortcutCaptureCommandId = row.dataset.commandId;
+    const command = commandRegistry.find(item => item.id === shortcutCaptureCommandId);
+    setShortcutHint(`Press a new shortcut for ${command?.label || 'this command'}. Escape cancels.`);
+    renderKeyboardShortcuts();
+    return;
+  }
+  if (event.target.closest('[data-action="clear-shortcut"]')) {
+    setCommandShortcut(row.dataset.commandId, '');
+    setShortcutHint('Shortcut cleared.');
+    return;
+  }
+  if (event.target.closest('[data-action="midi-learn"]')) {
+    midiLearnCommandId = row.dataset.commandId;
+    const command = commandRegistry.find(item => item.id === midiLearnCommandId);
+    setShortcutHint(`Move or press the MIDI control for ${command?.label || 'this command'}. Escape cancels.`);
+    renderKeyboardShortcuts();
+    return;
+  }
+  if (event.target.closest('[data-action="midi-clear"]')) {
+    delete midiMappings[row.dataset.commandId];
+    saveMidiMappings();
+    renderKeyboardShortcuts();
+    setShortcutHint('MIDI mapping cleared.');
+  }
+});
+
+els.btnShortcutsClose?.addEventListener('click', hideKeyboardShortcutsModal);
+els.btnShortcutsReset?.addEventListener('click', resetKeyboardShortcuts);
+els.btnMidiEnable?.addEventListener('click', enableMidiAccess);
+els.modalKeyboardShortcuts?.addEventListener('click', event => {
+  if (event.target === els.modalKeyboardShortcuts) hideKeyboardShortcutsModal();
+});
+
 els.btnExportResultClose?.addEventListener('click', hideExportResultModal);
 els.modalExportResult?.addEventListener('click', e => {
   if (e.target === els.modalExportResult) hideExportResultModal();
@@ -5780,9 +5969,412 @@ document.querySelectorAll('.audio-engine-select, .audio-input-select').forEach(s
   });
 });
 
+function handleCancelCommand() {
+  if (recordArmed) {
+    disarmRecord();
+    return;
+  }
+  hideRecordModeMenu();
+  if (shortcutCaptureCommandId) {
+    shortcutCaptureCommandId = null;
+    setShortcutHint('Shortcut edit cancelled.');
+    renderKeyboardShortcuts();
+    return;
+  }
+  if (midiLearnCommandId) {
+    midiLearnCommandId = null;
+    setShortcutHint('MIDI learn cancelled.');
+    renderKeyboardShortcuts();
+    return;
+  }
+  if (els.modalKeyboardShortcuts && !els.modalKeyboardShortcuts.classList.contains('hidden')) { hideKeyboardShortcutsModal(); return; }
+  if (!els.modalActors.classList.contains('hidden'))      { hideActorModal();      return; }
+  if (!els.modalCreateCue.classList.contains('hidden'))   { hideCreateCueModal();  return; }
+  if (!els.modalNewProject.classList.contains('hidden'))  { hideNewProjectModal(); return; }
+  if (!els.modalExportPdf.classList.contains('hidden'))   { hideExportModal();     return; }
+  if (els.modalExportResult && !els.modalExportResult.classList.contains('hidden')) { hideExportResultModal(); return; }
+  const projectInfoModal = document.getElementById('modal-project-info');
+  if (projectInfoModal && !projectInfoModal.classList.contains('hidden')) {
+    projectInfoModal.classList.add('hidden');
+    return;
+  }
+  if (selectedCueId) {
+    deselectCue();
+    setStatusInfo('Cue deselected. In/Out cleared. Ready to spot.');
+    return;
+  }
+  if (regionInFrames !== null || regionOutFrames !== null) {
+    regionInFrames = null;
+    regionOutFrames = null;
+    isLooping = false;
+    cancelPreroll();
+    updateRegionPanelUI();
+    updateRegionHighlight();
+    updateLoopButton();
+    updateCreateCueButton();
+    setStatusInfo('In/Out cleared.');
+  }
+}
+
+const SHORTCUT_STORAGE_KEY = 'postAdrPro.keyboardShortcuts.v1';
+const MIDI_MAP_STORAGE_KEY = 'postAdrPro.midiMap.v1';
+let shortcutOverrides = loadShortcutOverrides();
+let shortcutCaptureCommandId = null;
+let midiMappings = loadMidiMappings();
+let midiLearnCommandId = null;
+let midiAccess = null;
+let midiLastValues = new Map();
+
+const commandRegistry = [
+  { id: 'transport.playStop', group: 'Transport', label: 'Play / Stop', defaultShortcut: 'Space', run: () => { blurActiveButton(); togglePlay(); } },
+  { id: 'transport.stop', group: 'Transport', label: 'Stop', defaultShortcut: '', run: () => handleTransportStop() },
+  { id: 'transport.record', group: 'Transport', label: 'Record', defaultShortcut: 'R', run: () => handleRecordCommand() },
+  { id: 'transport.recordModeNormal', group: 'Transport', label: 'Recording Mode: Normal', defaultShortcut: '', run: () => setRecordMode('normal') },
+  { id: 'transport.recordModePunchIn', group: 'Transport', label: 'Recording Mode: Punch-in', defaultShortcut: '', run: () => setRecordMode('punch-in') },
+  { id: 'cue.markIn', group: 'Cue', label: 'Mark In', defaultShortcut: 'I', run: () => markIn() },
+  { id: 'cue.markOut', group: 'Cue', label: 'Mark Out', defaultShortcut: 'O', run: () => markOut() },
+  { id: 'cue.create', group: 'Cue', label: 'Create Cue', defaultShortcut: 'Enter', run: () => {
+    if (regionInFrames !== null && regionOutFrames !== null && regionOutFrames > regionInFrames && !selectedCueId && currentProject) showCreateCueModal();
+  } },
+  { id: 'cue.loop', group: 'Cue', label: 'Loop / Loop Record', defaultShortcut: 'L', run: () => toggleLoop() },
+  { id: 'cue.preroll', group: 'Cue', label: 'Cue Pre-roll', defaultShortcut: 'P', run: () => togglePrerollEnabled() },
+  { id: 'cue.status', group: 'Cue', label: 'Toggle Cue Open / Completed', defaultShortcut: '', run: () => toggleCueStatus().catch(err => setStatusError(err.message)) },
+  { id: 'cue.save', group: 'Cue', label: 'Save Cue Edits', defaultShortcut: '', run: () => saveCueEdits().catch(err => setStatusError(err.message)) },
+  { id: 'cue.delete', group: 'Cue', label: 'Delete Selected Cue', defaultShortcut: '', run: () => deleteCue().catch(err => setStatusError(err.message)) },
+  { id: 'playback.goodTakes', group: 'Playback', label: 'Good Takes Context Playback', defaultShortcut: '', run: () => els.btnGoodTakesPlayback?.click() },
+  { id: 'playback.boothTc', group: 'Playback', label: 'Booth Timecode', defaultShortcut: '', run: () => els.btnBoothTcToggle?.click() },
+  { id: 'playback.dxOverlay', group: 'Playback', label: 'Dialogue Overlay', defaultShortcut: '', run: () => els.btnDialogueOverlayToggle?.click() },
+  { id: 'playback.beep', group: 'Playback', label: 'Cue Beep On / Off', defaultShortcut: '', run: () => els.btnBeepToggle?.click() },
+  { id: 'playback.beepSettings', group: 'Playback', label: 'Beep Settings', defaultShortcut: '', run: () => els.btnBeepSettings?.click() },
+  { id: 'playback.videoMute', group: 'Playback', label: 'Mute Video Audio', defaultShortcut: '', run: () => els.videoTrackMute?.click() },
+  { id: 'playback.videoSolo', group: 'Playback', label: 'Solo Video Audio', defaultShortcut: '', run: () => els.videoTrackSolo?.click() },
+  { id: 'playback.volume', group: 'Playback', label: 'Playback Volume Level', defaultShortcut: '', midiType: 'continuous', run: value => setPlaybackVolume(value) },
+  { id: 'timeline.zoomIn', group: 'Timeline', label: 'Zoom In', defaultShortcut: '+', run: () => zoomIn() },
+  { id: 'timeline.zoomOut', group: 'Timeline', label: 'Zoom Out', defaultShortcut: '-', run: () => zoomOut() },
+  { id: 'timeline.fit', group: 'Timeline', label: 'Fit Project', defaultShortcut: 'F', run: () => fitProject() },
+  { id: 'timeline.zoomSelection', group: 'Timeline', label: 'Zoom Selection', defaultShortcut: '', run: () => { if (regionInFrames !== null && regionOutFrames !== null) zoomToSelection(); } },
+  { id: 'timeline.panLeft', group: 'Timeline', label: 'Pan Left', defaultShortcut: 'ArrowLeft', run: () => { if (peakData) { pauseAutoScroll(); panBy(-getViewWindow() * 0.1); } } },
+  { id: 'timeline.panRight', group: 'Timeline', label: 'Pan Right', defaultShortcut: 'ArrowRight', run: () => { if (peakData) { pauseAutoScroll(); panBy(getViewWindow() * 0.1); } } },
+  { id: 'timeline.zoomInKeyboard', group: 'Timeline', label: 'Zoom In (Keyboard)', defaultShortcut: 'Shift+ArrowUp', run: () => zoomIn() },
+  { id: 'timeline.zoomOutKeyboard', group: 'Timeline', label: 'Zoom Out (Keyboard)', defaultShortcut: 'Shift+ArrowDown', run: () => zoomOut() },
+  { id: 'project.new', group: 'Project', label: 'New Project', defaultShortcut: 'Ctrl+N', run: () => showNewProjectModal() },
+  { id: 'project.open', group: 'Project', label: 'Open Project', defaultShortcut: 'Ctrl+O', run: () => els.btnOpenProject?.click() },
+  { id: 'project.save', group: 'Project', label: 'Save Project', defaultShortcut: 'Ctrl+S', run: () => els.btnSaveProject?.click() },
+  { id: 'project.saveAs', group: 'Project', label: 'Save Project As', defaultShortcut: 'Ctrl+Shift+S', run: () => saveProjectAs().catch(err => setStatusError(err.message)) },
+  { id: 'project.loadVideo', group: 'Project', label: 'Load Video', defaultShortcut: 'Ctrl+L', run: () => els.btnLoadVideo?.click() },
+  { id: 'project.manageActors', group: 'Project', label: 'Manage Actors', defaultShortcut: 'Ctrl+M', run: () => { if (currentProject) showActorModal(); } },
+  { id: 'project.generateWaveform', group: 'Project', label: 'Generate Waveform', defaultShortcut: '', run: () => generateWaveform().catch(err => setStatusError(err.message)) },
+  { id: 'audio.refresh', group: 'Audio', label: 'Refresh Audio Engine', defaultShortcut: '', run: () => refreshAudioEnginePanel({ restartEngine: true, reopenSelected: true }) },
+  { id: 'audio.openDevice', group: 'Audio', label: 'Open Selected Device', defaultShortcut: '', run: () => openSelectedAudioEngineDevice() },
+  { id: 'audio.talkback', group: 'Audio', label: 'Talkback Hold', defaultShortcut: '', midiType: 'hold', run: value => configureNativeTalkback(value == null ? !nativeTalkbackActive : !!value) },
+  { id: 'display.booth', group: 'Display', label: 'Open Booth Display', defaultShortcut: '', run: () => els.btnOpenBooth?.click() },
+  { id: 'view.inspector', group: 'View', label: 'Show / Hide Inspector', defaultShortcut: '', run: () => els.btnInspectorToggle?.click() },
+  { id: 'export.goodTakes', group: 'Export', label: 'Full-Length Good Takes', defaultShortcut: '', run: () => submitExportGoodTakesPackage().catch(err => setStatusError(err.message)) },
+  { id: 'export.remoteManifest', group: 'Export', label: 'Remote Cue Manifest', defaultShortcut: '', run: () => submitExportRemoteCueManifest().catch(err => setStatusError(err.message)) },
+  { id: 'export.sessionReport', group: 'Export', label: 'ADR Session Report', defaultShortcut: '', run: () => submitExportReport().catch(err => setStatusError(err.message)) },
+  { id: 'export.csv', group: 'Export', label: 'ADR List CSV', defaultShortcut: '', run: () => submitExportCsv().catch(err => setStatusError(err.message)) },
+  { id: 'export.pdf', group: 'Export', label: 'ADR List PDF', defaultShortcut: '', run: () => showExportModal() },
+  { id: 'app.cancelContext', group: 'App', label: 'Cancel / Close / Clear Selection', defaultShortcut: 'Escape', run: () => handleCancelCommand() },
+  { id: 'app.shortcuts', group: 'App', label: 'Keyboard Shortcuts', defaultShortcut: '', run: () => showKeyboardShortcutsModal() },
+];
+
+function loadShortcutOverrides() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SHORTCUT_STORAGE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveShortcutOverrides() {
+  localStorage.setItem(SHORTCUT_STORAGE_KEY, JSON.stringify(shortcutOverrides));
+}
+
+function loadMidiMappings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MIDI_MAP_STORAGE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveMidiMappings() {
+  localStorage.setItem(MIDI_MAP_STORAGE_KEY, JSON.stringify(midiMappings));
+}
+
+function getCommandShortcut(command) {
+  return shortcutOverrides[command.id] ?? command.defaultShortcut ?? '';
+}
+
+function setCommandShortcut(commandId, shortcut) {
+  shortcutOverrides[commandId] = shortcut;
+  saveShortcutOverrides();
+  renderKeyboardShortcuts();
+}
+
+function resetKeyboardShortcuts() {
+  shortcutOverrides = {};
+  midiMappings = {};
+  saveShortcutOverrides();
+  saveMidiMappings();
+  renderKeyboardShortcuts();
+  setShortcutHint('Default shortcuts and MIDI mappings restored.');
+}
+
+function normalizeShortcutKey(event) {
+  if (event.code === 'Space' || event.key === ' ') return 'Space';
+  if (event.key === 'Esc') return 'Escape';
+  if (event.key === '=' || event.key === '+') return '+';
+  if (event.key === '_' || event.key === '-') return '-';
+  if (/^Arrow/.test(event.key)) return event.key;
+  if (/^F\d{1,2}$/.test(event.key)) return event.key;
+  if (event.key.length === 1) return event.key.toUpperCase();
+  return event.key;
+}
+
+function eventToShortcut(event) {
+  const key = normalizeShortcutKey(event);
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) return '';
+  const parts = [];
+  if (event.ctrlKey) parts.push('Ctrl');
+  if (event.metaKey) parts.push('Meta');
+  if (event.altKey) parts.push('Alt');
+  const hasNonShiftModifier = event.ctrlKey || event.metaKey || event.altKey;
+  if (event.shiftKey && key !== '+' && key !== '-' && (hasNonShiftModifier || key.length !== 1 || !/^[A-Z]$/.test(key))) {
+    parts.push('Shift');
+  }
+  parts.push(key);
+  return parts.join('+');
+}
+
+function shortcutLabel(shortcut) {
+  return shortcut || 'Unassigned';
+}
+
+function midiMappingLabel(mapping) {
+  if (!mapping) return 'Unassigned';
+  const channel = Number(mapping.channel) + 1;
+  const type = mapping.type === 'cc' ? 'CC' : mapping.type === 'note' ? 'Note' : 'MIDI';
+  return `Ch ${channel} ${type} ${mapping.number}`;
+}
+
+function midiEventKey(mapping) {
+  if (!mapping) return '';
+  return [mapping.type, mapping.channel, mapping.number].join(':');
+}
+
+function getCommandMidiMapping(command) {
+  return midiMappings[command.id] || null;
+}
+
+function findCommandForShortcut(shortcut) {
+  if (!shortcut) return null;
+  return commandRegistry.find(command => getCommandShortcut(command) === shortcut) || null;
+}
+
+function findCommandForMidiMapping(mapping) {
+  const key = midiEventKey(mapping);
+  if (!key) return null;
+  return commandRegistry.find(command => midiEventKey(getCommandMidiMapping(command)) === key) || null;
+}
+
+function setShortcutHint(message, warning = false) {
+  if (!els.shortcutsHint) return;
+  els.shortcutsHint.textContent = message;
+  els.shortcutsHint.classList.toggle('warning', !!warning);
+}
+
+function renderKeyboardShortcuts() {
+  if (!els.shortcutsList) return;
+  els.shortcutsList.innerHTML = commandRegistry.map(command => `
+    <div class="shortcut-row" data-command-id="${_escapeHtml(command.id)}">
+      <span class="shortcut-group">${_escapeHtml(command.group)}</span>
+      <span class="shortcut-label">${_escapeHtml(command.label)}</span>
+      <button type="button" class="btn btn-ghost shortcut-capture${shortcutCaptureCommandId === command.id ? ' capturing' : ''}" data-action="capture-shortcut">
+        ${_escapeHtml(shortcutLabel(getCommandShortcut(command)))}
+      </button>
+      <button type="button" class="btn btn-ghost shortcut-clear" data-action="clear-shortcut">Clear</button>
+      <button type="button" class="btn btn-ghost midi-learn${midiLearnCommandId === command.id ? ' capturing' : ''}" data-action="midi-learn">
+        ${_escapeHtml(midiMappingLabel(getCommandMidiMapping(command)))}
+      </button>
+      <button type="button" class="btn btn-ghost midi-clear" data-action="midi-clear">Clear</button>
+    </div>
+  `).join('');
+}
+
+function showKeyboardShortcutsModal() {
+  shortcutCaptureCommandId = null;
+  setShortcutHint('Click a shortcut, press the new key combination, then close.');
+  if (midiAccess) updateMidiStatus(`${midiAccess.inputs.size} MIDI input${midiAccess.inputs.size === 1 ? '' : 's'} ready`, 'ready');
+  else updateMidiStatus(navigator.requestMIDIAccess ? 'MIDI not enabled' : 'Web MIDI unavailable', navigator.requestMIDIAccess ? '' : 'warning');
+  renderKeyboardShortcuts();
+  els.modalKeyboardShortcuts?.classList.remove('hidden');
+}
+
+function hideKeyboardShortcutsModal() {
+  shortcutCaptureCommandId = null;
+  els.modalKeyboardShortcuts?.classList.add('hidden');
+}
+
+function captureShortcutForCommand(commandId, event) {
+  const shortcut = eventToShortcut(event);
+  if (!shortcut) return;
+  const command = commandRegistry.find(item => item.id === commandId);
+  if (!command) return;
+  const existing = findCommandForShortcut(shortcut);
+  if (existing && existing.id !== commandId) {
+    setShortcutHint(`${shortcut} is already assigned to ${existing.label}.`, true);
+    shortcutCaptureCommandId = null;
+    renderKeyboardShortcuts();
+    return;
+  }
+  setCommandShortcut(commandId, shortcut);
+  shortcutCaptureCommandId = null;
+  setShortcutHint(`${command.label} set to ${shortcut}.`);
+}
+
+function parseMidiMessage(message) {
+  const [status, data1 = 0, data2 = 0] = message.data || [];
+  const command = status & 0xf0;
+  const channel = status & 0x0f;
+  if (command === 0x90 && data2 > 0) return { type: 'note', channel, number: data1, value: data2 / 127 };
+  if (command === 0x80 || (command === 0x90 && data2 === 0)) return { type: 'noteOff', channel, number: data1, value: 0 };
+  if (command === 0xb0) return { type: 'cc', channel, number: data1, value: data2 / 127 };
+  return null;
+}
+
+function updateMidiStatus(message, state = '') {
+  if (!els.midiStatus) return;
+  els.midiStatus.textContent = message;
+  els.midiStatus.classList.toggle('ready', state === 'ready');
+  els.midiStatus.classList.toggle('warning', state === 'warning');
+}
+
+function attachMidiInputs() {
+  if (!midiAccess) return;
+  midiAccess.inputs.forEach(input => {
+    input.onmidimessage = handleMidiMessage;
+  });
+  updateMidiStatus(`${midiAccess.inputs.size} MIDI input${midiAccess.inputs.size === 1 ? '' : 's'} ready`, 'ready');
+}
+
+async function enableMidiAccess() {
+  if (!navigator.requestMIDIAccess) {
+    updateMidiStatus('Web MIDI is not available in this Electron runtime.', 'warning');
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    midiAccess.onstatechange = attachMidiInputs;
+    attachMidiInputs();
+  } catch (err) {
+    updateMidiStatus(`MIDI access failed: ${err.message}`, 'warning');
+  }
+}
+
+function captureMidiForCommand(commandId, midiEvent) {
+  if (!['note', 'cc'].includes(midiEvent.type)) return;
+  const command = commandRegistry.find(item => item.id === commandId);
+  if (!command) return;
+  const mapping = {
+    type: midiEvent.type,
+    channel: midiEvent.channel,
+    number: midiEvent.number,
+    behavior: command.midiType === 'continuous' ? 'continuous' : command.midiType === 'hold' ? 'hold' : midiEvent.type === 'cc' ? 'toggle' : 'trigger',
+  };
+  const existing = findCommandForMidiMapping(mapping);
+  if (existing && existing.id !== commandId) {
+    setShortcutHint(`${midiMappingLabel(mapping)} is already assigned to ${existing.label}.`, true);
+    midiLearnCommandId = null;
+    renderKeyboardShortcuts();
+    return;
+  }
+  midiMappings[commandId] = mapping;
+  saveMidiMappings();
+  midiLearnCommandId = null;
+  setShortcutHint(`${command.label} mapped to ${midiMappingLabel(mapping)}.`);
+  renderKeyboardShortcuts();
+}
+
+function handleMidiMessage(message) {
+  const midiEvent = parseMidiMessage(message);
+  if (!midiEvent) return;
+  if (midiLearnCommandId) {
+    captureMidiForCommand(midiLearnCommandId, midiEvent);
+    return;
+  }
+  const key = midiEventKey(midiEvent);
+  const command = commandRegistry.find(item => {
+    const mapping = getCommandMidiMapping(item);
+    if (!mapping) return false;
+    const eventType = midiEvent.type === 'noteOff' ? 'note' : midiEvent.type;
+    return midiEventKey(mapping) === midiEventKey({ ...midiEvent, type: eventType });
+  });
+  if (!command) return;
+  const mapping = getCommandMidiMapping(command);
+  if (command.midiType === 'continuous' || mapping?.behavior === 'continuous') {
+    command.run(midiEvent.value);
+    return;
+  }
+  if (command.midiType === 'hold' || mapping?.behavior === 'hold') {
+    command.run(midiEvent.type !== 'noteOff' && midiEvent.value >= 0.5);
+    return;
+  }
+  const previousValue = midiLastValues.get(key) || 0;
+  midiLastValues.set(key, midiEvent.value);
+  if (midiEvent.type === 'noteOff') return;
+  if (midiEvent.type === 'cc' && !(previousValue < 0.5 && midiEvent.value >= 0.5)) return;
+  runCommand(command.id);
+}
+
+function runCommand(commandId) {
+  const command = commandRegistry.find(item => item.id === commandId);
+  if (!command) return false;
+  command.run();
+  return true;
+}
+
+function runShortcutEvent(event) {
+  const shortcut = eventToShortcut(event);
+  const command = findCommandForShortcut(shortcut);
+  if (!command) return false;
+  event.preventDefault();
+  runCommand(command.id);
+  return true;
+}
+
 document.addEventListener('keydown', (e) => {
+  if (shortcutCaptureCommandId) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      shortcutCaptureCommandId = null;
+      setShortcutHint('Shortcut edit cancelled.');
+      renderKeyboardShortcuts();
+      return;
+    }
+    captureShortcutForCommand(shortcutCaptureCommandId, e);
+    return;
+  }
+  if (midiLearnCommandId && e.key === 'Escape') {
+    e.preventDefault();
+    midiLearnCommandId = null;
+    setShortcutHint('MIDI learn cancelled.');
+    renderKeyboardShortcuts();
+    return;
+  }
+
   // Never fire shortcuts when an input or textarea is focused
   if (isEditableShortcutTarget(e.target)) return;
+  const pressedShortcut = eventToShortcut(e);
+  const defaultCommand = commandRegistry.find(command => command.defaultShortcut === pressedShortcut);
+  if (runShortcutEvent(e)) return;
+  if (defaultCommand && getCommandShortcut(defaultCommand) !== pressedShortcut) {
+    e.preventDefault();
+    return;
+  }
 
   switch (e.key) {
     case ' ':
@@ -6337,6 +6929,7 @@ window.api.onMenu.recordMode?.((mode) => {
 window.api.onMenu.showPlaybackSettings?.(() => showPreferencePanel('playback'));
 window.api.onMenu.showAudioIo?.(() => showPreferencePanel('audio'));
 window.api.onMenu.showSessionSettings?.(() => showPreferencePanel('session'));
+window.api.onMenu.showKeyboardShortcuts?.(() => showKeyboardShortcutsModal());
 
 window.api.onWaveform.progress(({ stage, percent }) => { updateWaveformProgress(stage, percent); });
 
