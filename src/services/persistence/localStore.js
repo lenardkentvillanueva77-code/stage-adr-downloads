@@ -22,6 +22,74 @@ const { migrateProject, needsMigration } = require('../../core/schemaVersion');
 
 const PROJECT_EXTENSION = '.stageadr';
 
+function normalisePathForCompare(filePath) {
+  return String(filePath || '').replace(/\\/g, '/').toLowerCase();
+}
+
+function pathIsInside(childPath, parentPath) {
+  const child = normalisePathForCompare(childPath);
+  const parent = normalisePathForCompare(parentPath).replace(/\/+$/, '');
+  return child === parent || child.startsWith(parent + '/');
+}
+
+function rebasePathIfMoved(filePath, oldRoot, newRoot) {
+  if (!filePath || typeof filePath !== 'string') return filePath;
+  if (!oldRoot || !newRoot || normalisePathForCompare(oldRoot) === normalisePathForCompare(newRoot)) {
+    return filePath;
+  }
+  if (!pathIsInside(filePath, oldRoot)) return filePath;
+
+  const relative = path.relative(oldRoot, filePath);
+  return path.join(newRoot, relative);
+}
+
+function rebaseProjectForCurrentLocation(project, projectFilePath) {
+  const projectRoot = path.dirname(projectFilePath);
+  const previousFolders = project.settings?.projectFolders || {};
+  const previousRoot = previousFolders.rootPath
+    || (previousFolders.mediaPath ? path.dirname(previousFolders.mediaPath) : null);
+
+  const mediaPath = path.join(projectRoot, 'Media');
+  const audioPath = path.join(mediaPath, 'audio');
+  const exportsPath = path.join(projectRoot, 'Exports');
+
+  const next = {
+    ...project,
+    settings: {
+      ...(project.settings || {}),
+      projectFolders: {
+        rootPath: projectRoot,
+        mediaPath,
+        audioPath,
+        exportsPath,
+      },
+    },
+  };
+
+  if (previousRoot) {
+    if (next.video?.localPath) {
+      next.video = {
+        ...next.video,
+        localPath: rebasePathIfMoved(next.video.localPath, previousRoot, projectRoot),
+      };
+    }
+
+    next.takes = (next.takes || []).map(take => ({
+      ...take,
+      filePath: rebasePathIfMoved(take.filePath, previousRoot, projectRoot),
+      archiveDirectory: rebasePathIfMoved(take.archiveDirectory, previousRoot, projectRoot),
+      tracks: Array.isArray(take.tracks)
+        ? take.tracks.map(track => ({
+            ...track,
+            filePath: rebasePathIfMoved(track.filePath, previousRoot, projectRoot),
+          }))
+        : take.tracks,
+    }));
+  }
+
+  return next;
+}
+
 /**
  * Write a project object to disk as a .stageadr file.
  *
@@ -87,7 +155,9 @@ async function readProject(filePath) {
     }
 
     // Apply migrations
-    const { project, migrationsApplied } = migrateProject(parsed);
+    const migrated = migrateProject(parsed);
+    const project = rebaseProjectForCurrentLocation(migrated.project, filePath);
+    const { migrationsApplied } = migrated;
     const warnings = [];
 
     // Check if video file still exists on disk
