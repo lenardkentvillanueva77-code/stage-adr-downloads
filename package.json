@@ -1,6 +1,6 @@
 {
   "name": "stage-post-adr-cue-recorder",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "productName": "Post ADR Pro",
   "description": "Post ADR Pro — ADR spotting, cue management, and export",
   "main": "main.js",
@@ -29,7 +29,7 @@
   "build": {
     "appId": "com.stagepost.postadrpro",
     "productName": "Post ADR Pro",
-    "artifactName": "Post ADR Pro Beta 1.0 ${version}-${arch}.${ext}",
+    "artifactName": "Post ADR Pro Beta 1.1 ${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -60,7 +60,7 @@
       "signAndEditExecutable": false
     },
     "nsis": {
-      "artifactName": "Post ADR Pro Beta 1.0 Setup ${version}.${ext}",
+      "artifactName": "Post ADR Pro Beta 1.1 Setup ${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
@@ -68,7 +68,7 @@
       "shortcutName": "Post ADR Pro Beta"
     },
     "portable": {
-      "artifactName": "Post ADR Pro Beta 1.0 Portable ${version}.${ext}"
+      "artifactName": "Post ADR Pro Beta 1.1 Portable ${version}.${ext}"
     }
   }
 }

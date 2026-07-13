@@ -355,7 +355,7 @@ int EngineApp::run()
         {
             auto& recorder = deviceManager.getAudioGraph().getRecorder();
             const auto status = recorder.stop();
-            const auto ok = ! status.files.empty();
+            const auto ok = ! status.files.empty() && status.samplesWritten > 0;
             ipc.emitRecordStopResult (id,
                                       ok,
                                       ok ? "Recording stopped." : "Recording stopped with no files created.",

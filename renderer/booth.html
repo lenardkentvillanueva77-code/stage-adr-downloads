@@ -5,30 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; media-src 'self' file:; style-src 'self' 'unsafe-inline';" />
-  <title>Post ADR Pro — Actor Booth</title>
+  <title>Post ADR Pro - Actor Booth</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
-      width: 100%; height: 100%; overflow: hidden;
-      background: #000; color: #fff;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
       user-select: none;
       -webkit-app-region: drag;
     }
 
-    /* ── Root ─────────────────────────────────────────────────────────────── */
     .booth-root {
-      width: 100%; height: 100%;
+      width: 100%;
+      height: 100%;
       position: relative;
       background: #000;
     }
 
-    /* ── Video layer ──────────────────────────────────────────────────────── */
     .booth-video {
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       object-fit: contain;
       background: #000;
       display: none;
@@ -36,11 +40,13 @@
     }
     .booth-video.has-source { display: block; }
 
-    /* ── Idle overlay ─────────────────────────────────────────────────────── */
     .idle {
-      position: absolute; inset: 0;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       gap: 18px;
       background: #000;
       transition: opacity 0.3s;
@@ -48,31 +54,35 @@
     .idle.hidden { opacity: 0; pointer-events: none; }
 
     .idle-brand {
-      font-size: 28px; font-weight: 700; letter-spacing: 0.14em;
-      text-transform: uppercase; color: rgba(204, 34, 34, 0.75);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(204, 34, 34, 0.75);
     }
     .idle-waiting {
-      font-size: 16px; letter-spacing: 0.07em; text-transform: uppercase;
+      font-size: 16px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
       color: rgba(255, 255, 255, 0.22);
     }
 
-    /* ── Countdown dots ───────────────────────────────────────────────────── */
-    /* Three large dots shown during cue pre-roll. Hidden at all other times. */
     .countdown-dots {
       position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
-      display: none;                /* hidden by default                     */
+      inset: 0;
+      display: none;
       align-items: center;
       justify-content: center;
       gap: 36px;
-      background: rgba(0, 0, 0, 0.72);  /* dim backdrop during countdown    */
+      background: rgba(0, 0, 0, 0.72);
       pointer-events: none;
       z-index: 20;
     }
     .countdown-dots.visible { display: flex; }
 
     .cdot {
-      width: 48px; height: 48px;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.15);
       border: 2px solid rgba(255, 255, 255, 0.2);
@@ -84,11 +94,14 @@
       box-shadow: 0 0 24px rgba(255, 255, 255, 0.75);
     }
 
-    /* ── Character name badge ─────────────────────────────────────────────── */
     .char-badge {
       position: absolute;
-      top: 18px; left: 50%; transform: translateX(-50%);
-      font-size: 12px; font-weight: 600; letter-spacing: 0.12em;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
       text-transform: uppercase;
       color: rgba(255, 255, 255, 0.30);
       display: none;
@@ -97,27 +110,86 @@
     }
     .char-badge.visible { display: block; }
 
-    /* ── Dialogue overlay ─────────────────────────────────────────────────── */
     .dialogue-overlay {
+      --dialogue-anchor-x: 50%;
       position: absolute;
-      bottom: 12%;
-      left: 50%; transform: translateX(-50%);
-      max-width: 80%;
-      text-align: center;
-      padding: 10px 20px;
-      border-radius: 4px;
-      background: rgba(0, 0, 0, 0.50);
-      line-height: 1.45;
-      word-wrap: break-word;
+      left: 0;
+      right: 0;
+      bottom: 13%;
       display: none;
       pointer-events: none;
-      z-index: 10;
+      z-index: 14;
     }
     .dialogue-overlay.visible { display: block; }
-
-    .dialogue-overlay.size-small  { font-size: 20px; }
+    .dialogue-overlay.size-small { font-size: 20px; }
     .dialogue-overlay.size-medium { font-size: 30px; }
-    .dialogue-overlay.size-large  { font-size: 44px; }
+    .dialogue-overlay.size-large { font-size: 44px; }
+
+    .dialogue-anchor {
+      position: relative;
+      width: 100%;
+      max-width: 100%;
+      min-height: 3.2em;
+    }
+
+    .dialogue-line1 {
+      position: absolute;
+      left: var(--dialogue-anchor-x);
+      top: 0;
+      max-width: min(42vw, calc(100vw - var(--dialogue-anchor-x) - 4vw));
+      white-space: nowrap;
+      line-height: 1.2;
+      font-weight: 500;
+      text-align: left;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 8px rgba(0,0,0,0.35);
+    }
+
+    .dialogue-line2 {
+      position: absolute;
+      left: 50%;
+      top: 1.35em;
+      transform: translateX(-50%);
+      width: min(70vw, 1100px);
+      line-height: 1.2;
+      font-weight: 500;
+      text-align: center;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 8px rgba(0,0,0,0.35);
+    }
+
+    .streamer-layer {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 13;
+    }
+
+    .streamer-bar {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 18px;
+      background: rgba(57, 255, 20, 0.3);
+      display: none;
+      will-change: transform;
+    }
+    .streamer-bar.visible { display: block; }
+
+    .streamer-hit-flash {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 12px;
+      background: rgba(120, 255, 120, 0.65);
+      opacity: 0;
+      transform: translateX(-50%);
+      transition: opacity 0.08s linear;
+      display: none;
+    }
+    .streamer-hit-flash.visible {
+      display: block;
+      opacity: 1;
+    }
 
     .timecode-overlay {
       position: absolute;
@@ -137,12 +209,18 @@
     }
     .timecode-overlay.visible { display: block; }
 
-    /* ── Status strip ─────────────────────────────────────────────────────── */
     .status-strip {
-      position: absolute; bottom: 0; left: 0; right: 0;
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
       height: 22px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
       color: rgba(255,255,255,0.10);
       background: rgba(255,255,255,0.03);
       pointer-events: none;
@@ -152,40 +230,36 @@
 </head>
 <body>
   <div class="booth-root">
+    <video id="booth-video" class="booth-video" preload="none" muted disablePictureInPicture tabindex="-1"></video>
 
-    <!-- Video — display only, no controls, non-interactive, muted for autoplay -->
-    <video id="booth-video" class="booth-video"
-           preload="none"
-           muted
-           disablePictureInPicture
-           tabindex="-1">
-    </video>
-
-    <!-- Idle overlay -->
     <div class="idle" id="idle">
       <div class="idle-brand">POST ADR PRO</div>
-      <div class="idle-waiting">Waiting for cue…</div>
+      <div class="idle-waiting">Waiting for cue...</div>
     </div>
 
-    <!-- Countdown dots — shown only during cue pre-roll -->
     <div class="countdown-dots" id="countdown-dots">
       <div class="cdot" id="cdot-1"></div>
       <div class="cdot" id="cdot-2"></div>
       <div class="cdot" id="cdot-3"></div>
     </div>
 
-    <!-- Character name badge -->
     <div class="char-badge" id="char-badge"></div>
 
-    <!-- Dialogue overlay -->
-    <div class="dialogue-overlay size-medium" id="dialogue-overlay"></div>
+    <div class="streamer-layer" id="streamer-layer">
+      <div class="streamer-hit-flash" id="streamer-hit-flash"></div>
+      <div class="streamer-bar" id="streamer-bar"></div>
+    </div>
 
-    <!-- Optional timecode overlay -->
+    <div class="dialogue-overlay size-medium" id="dialogue-overlay">
+      <div class="dialogue-anchor" id="dialogue-anchor">
+        <div class="dialogue-line1" id="dialogue-line1"></div>
+        <div class="dialogue-line2" id="dialogue-line2"></div>
+      </div>
+    </div>
+
     <div class="timecode-overlay" id="timecode-overlay">00:00:00:00</div>
 
-    <!-- Status strip -->
-    <div class="status-strip" id="booth-status-strip">Actor Booth Display — Post ADR Pro</div>
-
+    <div class="status-strip" id="booth-status-strip">Actor Booth Display - Post ADR Pro</div>
   </div>
   <script src="booth.js"></script>
 </body>

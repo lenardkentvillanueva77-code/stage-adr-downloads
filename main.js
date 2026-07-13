@@ -365,6 +365,12 @@ function registerIpcHandlers() {
     return { ok: true };
   });
 
+  ipcMain.on('booth:transport-command', (_event, command) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('booth:transport-command', command || {});
+    }
+  });
+
   ipcMain.handle('booth:close', () => {
     if (boothWindow && !boothWindow.isDestroyed()) boothWindow.close();
     return { ok: true };

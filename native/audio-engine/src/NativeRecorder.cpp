@@ -100,8 +100,19 @@ RecordingStatus NativeRecorder::stop()
             file.filePath = lane->filePath;
             file.samplesWritten = lane->samplesWritten.load (std::memory_order_relaxed);
             file.droppedBlocks = lane->droppedBlocks.load (std::memory_order_relaxed);
-            status.samplesWritten = juce::jmax (status.samplesWritten, file.samplesWritten);
             status.droppedBlocks += file.droppedBlocks;
+
+            // Zero-sample files are not valid takes. They usually indicate that
+            // recording never actually received any audio callbacks after start.
+            // Delete them here so the renderer never mistakes placeholders for
+            // usable captures.
+            if (file.samplesWritten <= 0)
+            {
+                juce::File (file.filePath).deleteFile();
+                continue;
+            }
+
+            status.samplesWritten = juce::jmax (status.samplesWritten, file.samplesWritten);
             status.files.push_back (file);
         }
 

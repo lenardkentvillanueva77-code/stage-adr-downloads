@@ -188,6 +188,7 @@ contextBridge.exposeInMainWorld('api', {
   onApp: {
     closeRequested: (cb) => ipcRenderer.on('app:close-requested', cb),
     boothClosed:    (cb) => ipcRenderer.on('booth:closed',        cb),
+    boothTransportCommand: (cb) => ipcRenderer.on('booth:transport-command', (_event, command) => cb(command)),
   },
 
   // ── Waveform push events (main → renderer) ───────────────────────────────────
@@ -202,6 +203,7 @@ contextBridge.exposeInMainWorld('api', {
   booth: {
     open:  ()        => ipcRenderer.invoke('booth:open'),
     send:  (payload) => ipcRenderer.invoke('booth:send', payload),
+    isOpen: ()       => ipcRenderer.invoke('booth:isOpen'),
     close: ()        => ipcRenderer.invoke('booth:close'),
   },
 

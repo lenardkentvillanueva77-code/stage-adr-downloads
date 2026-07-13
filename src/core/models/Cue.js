@@ -19,12 +19,14 @@ const CUE_STATUSES = ['open', 'recorded', 'approved', 'omit'];
  * @param {object} opts
  * @param {string} opts.projectId
  * @param {string} opts.characterId
- * @param {string} opts.cueNumber    — e.g. "ADR-042" — human label, not the PK
+ * @param {string} opts.cueNumber
  * @param {string} [opts.scene]
  * @param {string} [opts.dialogue]
- * @param {number} opts.inFrames     — canonical timing
- * @param {number} opts.outFrames    — canonical timing
+ * @param {number} opts.inFrames
+ * @param {number} opts.outFrames
+ * @param {number|null} [opts.streamerStartFrames]
  * @param {string} [opts.notes]
+ * @param {string|null} [opts.actorId]
  * @returns {object}
  */
 function createCue({
@@ -35,8 +37,9 @@ function createCue({
   dialogue = '',
   inFrames,
   outFrames,
+  streamerStartFrames = null,
   notes = '',
-  actorId = null,   // optional — assigned actor; null = unassigned
+  actorId = null,
 }) {
   const now = nowISO();
 
@@ -51,11 +54,14 @@ function createCue({
 
     inFrames: Math.max(0, Math.round(inFrames ?? 0)),
     outFrames: Math.max(0, Math.round(outFrames ?? 0)),
+    streamerStartFrames: typeof streamerStartFrames === 'number'
+      ? Math.max(0, Math.round(streamerStartFrames))
+      : null,
 
     status: 'open',
     notes: (notes || '').trim(),
 
-    actorId: actorId || null,   // string | null — explicit field, not a pass-through
+    actorId: actorId || null,
 
     createdAt: now,
     updatedAt: now,
@@ -71,15 +77,17 @@ function validateCueShape(obj) {
   if (!obj || typeof obj !== 'object') {
     return { valid: false, reason: 'Cue is not an object.' };
   }
-  if (!obj.cueId)       return { valid: false, reason: 'Cue missing cueId.' };
-  if (!obj.projectId)   return { valid: false, reason: 'Cue missing projectId.' };
+  if (!obj.cueId) return { valid: false, reason: 'Cue missing cueId.' };
+  if (!obj.projectId) return { valid: false, reason: 'Cue missing projectId.' };
   if (!obj.characterId) return { valid: false, reason: 'Cue missing characterId.' };
-  if (typeof obj.inFrames  !== 'number') return { valid: false, reason: 'Cue missing inFrames.' };
+  if (typeof obj.inFrames !== 'number') return { valid: false, reason: 'Cue missing inFrames.' };
   if (typeof obj.outFrames !== 'number') return { valid: false, reason: 'Cue missing outFrames.' };
+  if (obj.streamerStartFrames !== undefined && obj.streamerStartFrames !== null && typeof obj.streamerStartFrames !== 'number') {
+    return { valid: false, reason: 'Cue streamerStartFrames must be null or a number.' };
+  }
   if (!CUE_STATUSES.includes(obj.status)) {
     return { valid: false, reason: `Cue has invalid status: ${obj.status}` };
   }
-  // actorId must be null, undefined, or a non-empty string
   if (obj.actorId !== undefined && obj.actorId !== null && typeof obj.actorId !== 'string') {
     return { valid: false, reason: 'Cue actorId must be null or a string.' };
   }

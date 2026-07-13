@@ -67,6 +67,7 @@ let peakData = null;
 
 let regionInFrames  = null;
 let regionOutFrames = null;
+let regionStreamerStartFrames = null;
 
 let isPlaying = false;
 let isLooping = false;
@@ -144,6 +145,8 @@ let _nativeLoopTakeContext = null;
 let _nativeLoopStopTimer = null;
 const COMP_TAKES_TOTAL = 3;      // hardcoded: 3 takes per comp loop
 const MIN_PENDING_RECORDING_SECS = 0.3;
+const WAVEFORM_AREA_MIN_HEIGHT = 80;
+const WAVEFORM_AREA_MAX_HEIGHT = 420;
 
 // Web Audio context
 let _audioCtx = null;
@@ -189,8 +192,6 @@ let zoomIndex  = 0;
 let canvasWidth  = 0;
 let canvasHeight = 0;
 let waveformVisualScale = 0.35;
-const WAVEFORM_AREA_MIN_HEIGHT = 80;
-const WAVEFORM_AREA_MAX_HEIGHT = 420;
 
 // Scrollbar drag
 let isScrollDragging  = false;
@@ -231,6 +232,7 @@ let videoTrackSoloed = false;
 let takesTrackMuted = false;
 let takesTrackSoloed = false;
 let playbackStartPosition = null;
+let nativeAudioPanelBusy = false;
 
 // Character filter for cue list (empty string = ALL)
 let cueListFilter = '';
@@ -240,6 +242,18 @@ let _autosaveTimer     = null;
 let _hasUnsavedChanges = false;
 const AUTOSAVE_INTERVAL_MS = 60_000;
 
+let transportActionGeneration = 0;
+let boothTransportCommandId = 0;
+const boothReadyWaiters = new Map();
+const BOOTH_TRANSPORT_TYPES = new Set([
+  'cuePlaybackStart',
+  'cuePlaybackStop',
+  'cueCountdownStart',
+  'cueCountdownClear',
+  'cuePrimed',
+  'cueDeselected',
+]);
+
 // ── Booth display helper ──────────────────────────────────────────────────────
 // boothSend() relays a low-frequency display-update to the booth window.
 // Called only from: selectCue, deselectCue, saveCueEdits, overlay listeners.
@@ -248,7 +262,56 @@ const AUTOSAVE_INTERVAL_MS = 60_000;
 // Deliberately not awaited so it never blocks the calling function.
 
 function boothSend(payload) {
-  window.api.booth.send(payload).catch(() => {});
+  const outbound = BOOTH_TRANSPORT_TYPES.has(payload?.type)
+    ? { ...payload, commandId: ++boothTransportCommandId }
+    : payload;
+  window.api.booth.send(outbound).catch(() => {});
+  return outbound?.commandId || null;
+}
+
+async function boothSendFlush(payload) {
+  const outbound = BOOTH_TRANSPORT_TYPES.has(payload?.type)
+    ? { ...payload, commandId: ++boothTransportCommandId }
+    : payload;
+  await window.api.booth.send(outbound).catch(() => {});
+  return outbound?.commandId || null;
+}
+
+function waitForBoothReady(commandId, timeoutMs = 350) {
+  if (!commandId) return Promise.resolve(false);
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      boothReadyWaiters.delete(commandId);
+      resolve(false);
+    }, timeoutMs);
+    boothReadyWaiters.set(commandId, () => {
+      clearTimeout(timeout);
+      boothReadyWaiters.delete(commandId);
+      resolve(true);
+    });
+  });
+}
+
+async function prepareBoothForVideoStart(startTime, timeoutMs = 350) {
+  const boothState = await window.api.booth.isOpen?.().catch(() => ({ isOpen: false }));
+  if (!boothState?.isOpen) return true;
+  const commandId = boothSend({ type: 'cuePrimed', currentTime: startTime });
+  return waitForBoothReady(commandId, timeoutMs);
+}
+
+async function startSyncedVideoAt(startTime, allowedStates) {
+  const actionGeneration = transportActionGeneration;
+  els.videoPlayer.pause();
+  els.videoPlayer.currentTime = startTime;
+  await prepareBoothForVideoStart(startTime);
+  if (actionGeneration !== transportActionGeneration) return false;
+  if (Array.isArray(allowedStates) && allowedStates.length && !allowedStates.includes(transportState)) {
+    return false;
+  }
+  els.videoPlayer.currentTime = startTime;
+  await boothSendFlush({ type: 'cuePlaybackStart', currentTime: startTime });
+  await els.videoPlayer.play().catch(() => {});
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -317,6 +380,7 @@ const els = {
   playhead:               document.getElementById('playhead'),
   regionHighlight:        document.getElementById('region-highlight'),
   markerIn:               document.getElementById('marker-in'),
+  markerStreamer:         document.getElementById('marker-streamer'),
   markerOut:              document.getElementById('marker-out'),
   timelineScrollbarTrack: document.getElementById('timeline-scrollbar-track'),
   timelineScrollbarThumb: document.getElementById('timeline-scrollbar-thumb'),
@@ -399,7 +463,7 @@ const els = {
   beepTypeSelect:         document.getElementById('beep-type-select'),
   beepModalVolume:        document.getElementById('beep-modal-volume'),
   btnBeepModalClose:      document.getElementById('btn-beep-modal-close'),
-  modalKeyboardShortcuts:  document.getElementById('modal-keyboard-shortcuts'),
+  modalKeyboardShortcuts: document.getElementById('modal-keyboard-shortcuts'),
   shortcutsList:          document.getElementById('shortcuts-list'),
   shortcutsHint:          document.getElementById('shortcuts-hint'),
   midiStatus:             document.getElementById('midi-status'),
@@ -439,6 +503,7 @@ const els = {
   audioInputSelect:       document.getElementById('audio-input-select'),
   audioInputStatus:       document.getElementById('audio-input-status'),
   btnMarkIn:              document.getElementById('btn-mark-in'),
+  btnStreamerTarget:      document.getElementById('btn-streamer-target'),
   btnMarkOut:             document.getElementById('btn-mark-out'),
   btnLoop:                document.getElementById('btn-loop'),
   btnCreateCue:           document.getElementById('btn-create-cue'),
@@ -601,6 +666,16 @@ function handleNativePlaybackFailure(errorText) {
   handleNativeEngineLoss(errorText, 'playback');
 }
 
+function setNativeAudioPanelBusy(busy) {
+  nativeAudioPanelBusy = !!busy;
+  const hasDeviceSelection = !!els.audioEngineDeviceSelect?.value;
+  if (els.audioEngineDeviceSelect) els.audioEngineDeviceSelect.disabled = nativeAudioPanelBusy;
+  if (els.audioEngineBufferSize) els.audioEngineBufferSize.disabled = nativeAudioPanelBusy;
+  if (els.btnOpenAudioEngineDevice) els.btnOpenAudioEngineDevice.disabled = nativeAudioPanelBusy || !hasDeviceSelection;
+  if (els.btnOpenAudioEngineDiagnostic) els.btnOpenAudioEngineDiagnostic.disabled = nativeAudioPanelBusy || !hasDeviceSelection;
+  if (els.btnRefreshAudioEngine) els.btnRefreshAudioEngine.disabled = nativeAudioPanelBusy;
+}
+
 async function refreshAudioEnginePanel(options = {}) {
   if (!window.api?.audioEngine) return;
   const restartEngine = !!options.restartEngine;
@@ -617,10 +692,8 @@ async function refreshAudioEnginePanel(options = {}) {
   els.audioEngineRecordStatus.textContent = 'Idle';
   clearNativeRuntimeState();
   els.audioEngineDeviceSelect.innerHTML = '<option value="">Select device…</option>';
-  els.btnOpenAudioEngineDevice.disabled = true;
-  els.btnOpenAudioEngineDiagnostic.disabled = true;
   renderNativeLaneSourceOptions(null);
-  els.btnRefreshAudioEngine.disabled = true;
+  setNativeAudioPanelBusy(true);
 
   try {
     if (restartEngine) {
@@ -670,12 +743,11 @@ async function refreshAudioEnginePanel(options = {}) {
       els.audioEngineDeviceSelect.value = selectedDeviceId;
       renderNativeLaneSourceOptions(getSelectedNativeDevice());
       renderNativeOutputOptions(getSelectedNativeDevice());
-      els.btnOpenAudioEngineDevice.disabled = false;
-      els.btnOpenAudioEngineDiagnostic.disabled = false;
     }
     await refreshRoutingInspect();
 
     if (restartEngine && reopenSelected && els.audioEngineDeviceSelect.value) {
+      setNativeAudioPanelBusy(false);
       if (selectedMode === 'diagnostic') await openSelectedAudioEngineDiagnostic();
       else await openSelectedAudioEngineDevice();
       return;
@@ -698,7 +770,7 @@ async function refreshAudioEnginePanel(options = {}) {
       ? 'Audio device scan timed out. Project/video work is still available; refresh audio later.'
       : `Native audio engine: ${err.message}`);
   } finally {
-    els.btnRefreshAudioEngine.disabled = false;
+    setNativeAudioPanelBusy(false);
   }
 }
 
@@ -779,8 +851,8 @@ function renderAudioEngineDeviceOptions(devices) {
     els.audioEngineDeviceSelect.value = currentDeviceId;
   }
 
-  els.btnOpenAudioEngineDevice.disabled = !els.audioEngineDeviceSelect.value;
-  els.btnOpenAudioEngineDiagnostic.disabled = !els.audioEngineDeviceSelect.value;
+  els.btnOpenAudioEngineDevice.disabled = nativeAudioPanelBusy || !els.audioEngineDeviceSelect.value;
+  els.btnOpenAudioEngineDiagnostic.disabled = nativeAudioPanelBusy || !els.audioEngineDeviceSelect.value;
   renderNativeLaneSourceOptions(getSelectedNativeDevice());
   renderNativeOutputOptions(getSelectedNativeDevice());
 }
@@ -881,6 +953,7 @@ async function saveNativeAudioSetup() {
 }
 
 async function openSelectedAudioEngineDevice() {
+  if (nativeAudioPanelBusy) return;
   const deviceId = els.audioEngineDeviceSelect.value;
   if (!deviceId) return;
 
@@ -890,7 +963,7 @@ async function openSelectedAudioEngineDevice() {
     setStatusWarn('Selected audio device does not expose a usable stereo output.');
     return;
   }
-  els.btnOpenAudioEngineDevice.disabled = true;
+  setNativeAudioPanelBusy(true);
   els.audioEngineRoutingStatus.textContent = 'Opening...';
 
   try {
@@ -918,8 +991,9 @@ async function openSelectedAudioEngineDevice() {
       startNativeMetering();
       updateNativeRecordButtons(true);
       await configureNativeRouting();
-      configureNativeMonitoring();
-      if (capability.mode !== 'studio') configureNativeTalkback(false);
+      await configureNativeMonitoring();
+      if (capability.mode !== 'studio') await configureNativeTalkback(false);
+      else if (nativeTalkbackActive || nativeTalkbackLatched) await configureNativeTalkback(true);
       applyMonitorState();
       prepareNativeGuideAudio().catch(err => setStatusWarn('Native guide prepare failed: ' + err.message));
       if (isPlaying) resyncPlaybackTargetsForCurrentTimeline().catch(() => {});
@@ -934,16 +1008,17 @@ async function openSelectedAudioEngineDevice() {
     markNativeDeviceClosed();
     setStatusError(`Native audio device open failed: ${err.message}`);
   } finally {
-    els.btnOpenAudioEngineDevice.disabled = !els.audioEngineDeviceSelect.value;
+    setNativeAudioPanelBusy(false);
   }
 }
 
 async function openSelectedAudioEngineDiagnostic() {
+  if (nativeAudioPanelBusy) return;
   const deviceId = els.audioEngineDeviceSelect.value;
   if (!deviceId) return;
 
   const device = nativeAudioDevices.find(d => d.deviceId === deviceId);
-  els.btnOpenAudioEngineDiagnostic.disabled = true;
+  setNativeAudioPanelBusy(true);
   els.audioEngineRoutingStatus.textContent = 'Opening diagnostic...';
 
   try {
@@ -968,7 +1043,7 @@ async function openSelectedAudioEngineDiagnostic() {
       startNativeMetering();
       updateNativeRecordButtons(true);
       await configureNativeRouting();
-      configureNativeMonitoring();
+      await configureNativeMonitoring();
       applyMonitorState();
       prepareNativeGuideAudio().catch(err => setStatusWarn('Native guide prepare failed: ' + err.message));
       if (isPlaying) resyncPlaybackTargetsForCurrentTimeline().catch(() => {});
@@ -983,12 +1058,12 @@ async function openSelectedAudioEngineDiagnostic() {
     markNativeDeviceClosed();
     setStatusError(`Diagnostic audio open failed: ${err.message}`);
   } finally {
-    els.btnOpenAudioEngineDiagnostic.disabled = !els.audioEngineDeviceSelect.value;
+    setNativeAudioPanelBusy(false);
   }
 }
 
 async function reopenNativeDeviceForBufferChange() {
-  if (!nativeDeviceOpen || !nativeDeviceOpenMode || nativeRecordingActive) return;
+  if (!nativeDeviceOpen || !nativeDeviceOpenMode || nativeRecordingActive || nativeAudioPanelBusy) return;
 
   setStatusInfo(`Reopening native audio at ${getSelectedNativeBufferSize()} samples...`);
   if (nativeDeviceOpenMode === 'studio' || nativeDeviceOpenMode === 'compact') {
@@ -1078,7 +1153,7 @@ function updateNativeIoStatus(meters) {
 
 function updateNativeRecordButtons(deviceOpen) {
   const armedLanes = getArmedNativeRecordLanes();
-  const canRecord = !!deviceOpen && !nativeRecordingActive && armedLanes.length > 0 && !getNativeRecordLaneConflict(armedLanes);
+  const canRecord = !!deviceOpen && !nativeRecordingActive && armedLanes.length > 0;
   els.btnNativeRecordStart.disabled = !canRecord;
   els.btnNativeRecordStop.disabled = !nativeRecordingActive;
   updateNativeLaneButtons();
@@ -1144,25 +1219,6 @@ function getArmedNativeRecordLanes() {
   ];
 
   return lanes.filter(lane => lane.armed && Number.isInteger(lane.physicalInput) && lane.physicalInput >= 0);
-}
-
-function getNativeInputDisplayName(inputIndex) {
-  const device = getSelectedNativeDevice();
-  const inputNames = Array.isArray(device?.inputChannelNames) ? device.inputChannelNames : [];
-  return `${inputIndex + 1}: ${inputNames[inputIndex] || `Input ${inputIndex + 1}`}`;
-}
-
-function getNativeRecordLaneConflict(lanes = getArmedNativeRecordLanes()) {
-  const seen = new Map();
-  for (const lane of lanes) {
-    if (!seen.has(lane.physicalInput)) {
-      seen.set(lane.physicalInput, lane);
-      continue;
-    }
-    const other = seen.get(lane.physicalInput);
-    return `${other.label} and ${lane.label} are both assigned to ${getNativeInputDisplayName(lane.physicalInput)}. Change one source or disarm one lane.`;
-  }
-  return '';
 }
 
 function getNativeMonitorLanes() {
@@ -1308,13 +1364,6 @@ async function startNativeInputRecording() {
     if (!lanes.length) {
       els.audioEngineRecordStatus.textContent = 'Arm a mic lane first';
       updateNativeRecordButtons(nativeDeviceOpen);
-      return;
-    }
-    const laneConflict = getNativeRecordLaneConflict(lanes);
-    if (laneConflict) {
-      els.audioEngineRecordStatus.textContent = 'Input conflict';
-      updateNativeRecordButtons(nativeDeviceOpen);
-      setStatusError(laneConflict);
       return;
     }
 
@@ -1871,9 +1920,9 @@ function _startPrepPass() {
   if (regionInFrames === null || regionOutFrames === null) return;
   const inSec = framesToSeconds(regionInFrames);
   _setTransportState('PREP_PASS');
-  els.videoPlayer.currentTime = inSec;
-  els.videoPlayer.play().catch(() => {});
-  boothSend({ type: 'cuePlaybackStart', currentTime: inSec });
+  startSyncedVideoAt(inSec, ['PREP_PASS']).catch(err => {
+    if (transportState === 'PREP_PASS') setStatusWarn('Booth sync start warning: ' + err.message);
+  });
 }
 
 /**
@@ -1920,9 +1969,7 @@ function _startTakePass() {
         }
         setStatusInfo('[DIAG] PREVIEW-ONLY PASS (no device)');
         _setTransportState('TAKE_PASS');
-        els.videoPlayer.currentTime = inSec;
-        els.videoPlayer.play().catch(() => {});
-        boothSend({ type: 'cuePlaybackStart', currentTime: inSec });
+        startSyncedVideoAt(inSec, ['TAKE_PASS']).catch(err => setStatusWarn('Booth sync start warning: ' + err.message));
       }
     });
   } else {
@@ -1939,9 +1986,7 @@ function _startTakePass() {
         return;
       }
       _setTransportState('TAKE_PASS');
-      els.videoPlayer.currentTime = inSec;
-      els.videoPlayer.play().catch(() => {});
-      boothSend({ type: 'cuePlaybackStart', currentTime: inSec });
+      startSyncedVideoAt(inSec, ['TAKE_PASS']).catch(err => setStatusWarn('Booth sync start warning: ' + err.message));
     }
   }
 }
@@ -2160,6 +2205,7 @@ function updateRegionHighlight() {
   if (!peakData || canvasWidth === 0) {
     els.regionHighlight.style.display = 'none';
     els.markerIn.classList.add('hidden');
+    els.markerStreamer.classList.add('hidden');
     els.markerOut.classList.add('hidden');
     els.infoRegionChip.classList.add('hidden');
     return;
@@ -2168,6 +2214,7 @@ function updateRegionHighlight() {
   if (!hasRegion) {
     els.regionHighlight.style.display = 'none';
     els.markerIn.classList.add('hidden');
+    els.markerStreamer.classList.add('hidden');
     els.markerOut.classList.add('hidden');
     els.infoRegionChip.classList.add('hidden');
     return;
@@ -2179,6 +2226,18 @@ function updateRegionHighlight() {
   els.regionHighlight.style.width   = `${Math.max(1, xOut - xIn)}px`;
   if (xIn >= -1 && xIn <= canvasWidth + 1) { els.markerIn.classList.remove('hidden'); els.markerIn.style.left = `${Math.max(0, xIn)}px`; }
   else { els.markerIn.classList.add('hidden'); }
+  const streamerFrames = getActiveStreamerTargetFrames();
+  if (typeof streamerFrames === 'number' && streamerFrames >= regionInFrames && streamerFrames <= regionOutFrames) {
+    const xStreamer = secondsToViewX(framesToSeconds(streamerFrames));
+    if (xStreamer >= -1 && xStreamer <= canvasWidth + 1) {
+      els.markerStreamer.classList.remove('hidden');
+      els.markerStreamer.style.left = `${Math.max(0, Math.min(canvasWidth, xStreamer))}px`;
+    } else {
+      els.markerStreamer.classList.add('hidden');
+    }
+  } else {
+    els.markerStreamer.classList.add('hidden');
+  }
   if (xOut >= -1 && xOut <= canvasWidth + 1) { els.markerOut.classList.remove('hidden'); els.markerOut.style.left = `${Math.min(canvasWidth, xOut)}px`; }
   else { els.markerOut.classList.add('hidden'); }
   els.infoRegionChip.classList.remove('hidden');
@@ -2355,9 +2414,10 @@ function togglePlay() {
     // Play = preview only. Never triggers loop/recording workflow.
     playbackStartPosition = els.videoPlayer.currentTime || 0;
     _setTransportState('PREVIEWING');
-    els.videoPlayer.play().catch(() => {});
     if (selectedCueId) {
-      boothSend({ type: 'cuePlaybackStart', currentTime: els.videoPlayer.currentTime });
+      startSyncedVideoAt(els.videoPlayer.currentTime || 0, ['PREVIEWING']).catch(err => setStatusWarn('Booth sync start warning: ' + err.message));
+    } else {
+      els.videoPlayer.play().catch(() => {});
     }
   }
 }
@@ -2376,6 +2436,7 @@ function handleTransportStop() {
 }
 
 function stopPlayback() {
+  transportActionGeneration++;
   if (!els.videoPlayer.src) return;
   if (transportState === 'PENDING_RECORDING' && pendingCueRecording) {
     window.api.audioEngine.stopRecording().catch(() => {});
@@ -2913,6 +2974,8 @@ function markIn() {
   if (!currentProject || els.videoPlayer.readyState < 1) return;
   regionInFrames = secondsToFrames(els.videoPlayer.currentTime);
   if (regionOutFrames !== null && regionOutFrames <= regionInFrames) regionOutFrames = null;
+  const nextStreamer = clampStreamerTargetFrames(regionStreamerStartFrames);
+  regionStreamerStartFrames = nextStreamer;
   updateRegionPanelUI();
   updateRegionHighlight();
   updateCreateCueButton();
@@ -2927,6 +2990,8 @@ function markOut() {
     setStatusWarn('Mark Out must be after Mark In.'); return;
   }
   regionOutFrames = f;
+  const nextStreamer = clampStreamerTargetFrames(regionStreamerStartFrames);
+  regionStreamerStartFrames = nextStreamer;
   updateRegionPanelUI();
   updateRegionHighlight();
   updateCreateCueButton();
@@ -2944,6 +3009,7 @@ function updateRegionPanelUI() {
     els.regionInFramesEl.textContent = '—';
     els.btnMarkIn.classList.remove('btn-mark-in-active');
   }
+  els.btnStreamerTarget.classList.toggle('btn-streamer-active', typeof getActiveStreamerTargetFrames() === 'number');
   if (regionOutFrames !== null) {
     els.regionOutTc.textContent       = framesToTC(regionOutFrames);
     els.regionOutFramesEl.textContent = `${regionOutFrames} f`;
@@ -2959,7 +3025,70 @@ function updateRegionPanelUI() {
   } else {
     els.regionDuration.textContent = '—';
   }
-  els.btnZoomSelection.disabled = !(regionInFrames !== null && regionOutFrames !== null) || !peakData;
+  const hasRegion = regionInFrames !== null && regionOutFrames !== null && regionOutFrames > regionInFrames;
+  els.btnZoomSelection.disabled = !hasRegion || !peakData;
+  els.btnStreamerTarget.disabled = !hasRegion;
+}
+
+function getActiveStreamerTargetFrames() {
+  if (selectedCueId && currentProject) {
+    const cue = currentProject.cues.find(c => c.cueId === selectedCueId);
+    return typeof cue?.streamerStartFrames === 'number' ? cue.streamerStartFrames : null;
+  }
+  return typeof regionStreamerStartFrames === 'number' ? regionStreamerStartFrames : null;
+}
+
+function clampStreamerTargetFrames(frame) {
+  if (regionInFrames === null || regionOutFrames === null || regionOutFrames <= regionInFrames) return null;
+  if (typeof frame !== 'number' || !Number.isFinite(frame)) return null;
+  return Math.max(regionInFrames, Math.min(regionOutFrames, Math.round(frame)));
+}
+
+async function setStreamerTargetAtCurrentPlayhead() {
+  if (regionInFrames === null || regionOutFrames === null || regionOutFrames <= regionInFrames) {
+    setStatusWarn('Set In and Out before placing a streamer target.');
+    return;
+  }
+  const targetFrame = clampStreamerTargetFrames(secondsToFrames(els.videoPlayer.currentTime || 0));
+  if (targetFrame === null) return;
+
+  if (selectedCueId && currentProject) {
+    const result = await window.api.cue.updateCue(selectedCueId, { streamerStartFrames: targetFrame });
+    if (!result.success) {
+      setStatusError(`Streamer target save failed: ${result.error}`);
+      return;
+    }
+    currentProject = result.project;
+    const updatedCue = currentProject.cues.find(c => c.cueId === selectedCueId);
+    if (updatedCue) {
+      regionStreamerStartFrames = updatedCue.streamerStartFrames;
+      showCueDetail(updatedCue);
+      const chars = currentProject.characters || [];
+      const char = chars.find(c => c.characterId === updatedCue.characterId);
+      boothSend({
+        type: 'cueSelected',
+        cueNumber: updatedCue.cueNumber,
+        characterName: char?.name || '',
+        dialogue: updatedCue.dialogue || '',
+        inTime: framesToSeconds(updatedCue.inFrames),
+        outTime: framesToSeconds(updatedCue.outFrames),
+        streamerTargetTime: typeof updatedCue.streamerStartFrames === 'number' ? framesToSeconds(updatedCue.streamerStartFrames) : null,
+        overlayColor: ws.dialogueOverlayColor,
+        overlayFontSize: ws.dialogueOverlayFontSize,
+        showTimecode: ws.boothTimecodeEnabled,
+        frameRate: currentProject?.settings?.frameRate || '25',
+      });
+    }
+    updateRegionPanelUI();
+    updateRegionHighlight();
+    setStatusInfo(`Streamer target set at ${framesToTC(targetFrame)}.`);
+    return;
+  }
+
+  regionStreamerStartFrames = targetFrame;
+  updateRegionPanelUI();
+  updateRegionHighlight();
+  setStatusInfo(`Streamer target prepared at ${framesToTC(targetFrame)}.`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3207,11 +3336,7 @@ function getPendingTakeDirectory(mediaPath) {
 }
 
 async function startSelectedCueRecord() {
-  if (!selectedCueId) return;
-  if (transportState === 'IDLE') _setTransportState('CUE_READY');
-  if (transportState !== 'CUE_READY') {
-    return setStatusWarn('Stop playback before recording the selected cue.');
-  }
+  if (!selectedCueId || transportState !== 'CUE_READY') return;
   const cue = currentProject?.cues?.find(c => c.cueId === selectedCueId);
   if (!cue) return setStatusError('Cue not found for recording.');
   regionInFrames = cue.inFrames;
@@ -3233,13 +3358,18 @@ async function startPendingCueRecording() {
   if (!mediaPath) return setStatusError('Project must be saved before recording.');
   const lanes = getArmedNativeRecordLanes();
   if (!lanes.length) return setStatusError('Arm at least one native mic lane before recording.');
-  const laneConflict = getNativeRecordLaneConflict(lanes);
-  if (laneConflict) throw new Error(laneConflict);
 
   const startSecs = els.videoPlayer.currentTime || 0;
   const startFrame = secondsToFrames(startSecs);
   const takeDirectory = getPendingTakeDirectory(mediaPath);
-  const response = await window.api.audioEngine.startRecording({ lanes, takeDirectory });
+  let response = await window.api.audioEngine.startRecording({ lanes, takeDirectory });
+  if (!response.success || !response.result?.ok) {
+    const message = response.result?.message || response.error || '';
+    if (/already active/i.test(message)) {
+      await window.api.audioEngine.stopRecording().catch(() => {});
+      response = await window.api.audioEngine.startRecording({ lanes, takeDirectory });
+    }
+  }
   const result = response.result || {};
   if (!response.success || !result.ok) {
     throw new Error(result.message || response.error || 'Native record.start failed.');
@@ -3370,10 +3500,6 @@ async function attachPendingRecordingToCue(cue) {
 }
 
 function handleRecordCommand() {
-  if (!currentProject || els.videoPlayer.readyState < 1) {
-    setStatusWarn('Load a video before recording.');
-    return;
-  }
   if (recordArmed) {
     disarmRecord();
     return;
@@ -3392,9 +3518,7 @@ function handleRecordCommand() {
   }
   if (transportState === 'IDLE') {
     armRecord();
-    return;
   }
-  setStatusWarn('Record is available from idle, selected cue, or punch-in playback.');
 }
 
 function showRecordModeMenu(x, y) {
@@ -3622,11 +3746,6 @@ async function _beginNativeRecordingTake(cueOutSecs, cueDurationSecs) {
     setStatusError('Arm at least one native mic lane before recording.');
     _abortCurrentTake(); return;
   }
-  const laneConflict = getNativeRecordLaneConflict(lanes);
-  if (laneConflict) {
-    setStatusError(laneConflict);
-    _abortCurrentTake(); return;
-  }
 
   const takeNumber = (currentProject.takes.filter(t => t.cueId === cue.cueId).length) + 1;
   const takeDirectory = _resolveNativeTakeDirectory(mediaPath, cue.cueNumber, takeNumber);
@@ -3649,9 +3768,15 @@ async function _beginNativeRecordingTake(cueOutSecs, cueDurationSecs) {
   updateNativeRecordButtons(nativeDeviceOpen);
 
   const inSec = framesToSeconds(regionInFrames);
-  els.videoPlayer.currentTime = inSec;
-  els.videoPlayer.play().catch(() => {});
-  boothSend({ type: 'cuePlaybackStart', currentTime: inSec });
+  const syncStarted = await startSyncedVideoAt(inSec, ['CUE_READY', 'COUNTDOWN']);
+  if (!syncStarted) {
+    await window.api.audioEngine.stopRecording().catch(() => {});
+    _nativeLoopTakeContext = null;
+    nativeRecordingActive = false;
+    updateNativeRecordButtons(nativeDeviceOpen);
+    throw new Error('Recording start was interrupted before synced playback could begin.');
+  }
+
   _setTransportState('RECORDING_TAKE');
   _clearNativeLoopStopTimer();
   _nativeLoopStopTimer = setTimeout(() => {
@@ -3894,10 +4019,13 @@ async function _beginRecordingTake(cueOutSecs, cueDurationSecs) {
   const ctx = getAudioCtx();
   const inSec = framesToSeconds(regionInFrames);
 
-  // Seek and play
-  els.videoPlayer.currentTime = inSec;
-  els.videoPlayer.play().catch(() => {});
-  boothSend({ type: 'cuePlaybackStart', currentTime: inSec });
+  const syncStarted = await startSyncedVideoAt(inSec, ['CUE_READY', 'COUNTDOWN']);
+  if (!syncStarted) {
+    console.warn('[R3a-DIAG] CHECKPOINT 10: RECORD START CANCELLED before synced playback');
+    setStatusWarn('[DIAG] Record start cancelled before synced playback began.');
+    return;
+  }
+
   console.log('[R3a-DIAG] CHECKPOINT 10: RECORD PLAY STARTED — currentTime:', inSec);
   setStatusInfo('[DIAG] RECORD PLAY STARTED at ' + inSec.toFixed(2) + 's');
 
@@ -4185,6 +4313,7 @@ async function submitCreateCue() {
     characterId,
     inFrames:  regionInFrames,
     outFrames: regionOutFrames,
+    streamerStartFrames: regionStreamerStartFrames,
     dialogue:  '',
     notes:     '',
   });
@@ -4196,6 +4325,7 @@ async function submitCreateCue() {
   }
 
   currentProject = cueResult.project;
+  regionStreamerStartFrames = null;
   renderCueList();
   rebuildCharacterFilter();
 
@@ -4418,6 +4548,7 @@ function selectCue(cueId) {
   // Set region to cue timing
   regionInFrames  = cue.inFrames;
   regionOutFrames = cue.outFrames;
+  regionStreamerStartFrames = typeof cue.streamerStartFrames === 'number' ? cue.streamerStartFrames : null;
   updateRegionPanelUI();
   updateRegionHighlight();
   updateLoopButton();
@@ -4456,6 +4587,9 @@ function selectCue(cueId) {
     cueNumber:      cue.cueNumber,
     characterName:  char2?.name || '',
     dialogue:       cue.dialogue || '',
+    inTime:         inSec,
+    outTime:        framesToSeconds(cue.outFrames),
+    streamerTargetTime: typeof cue.streamerStartFrames === 'number' ? framesToSeconds(cue.streamerStartFrames) : null,
     overlayColor:   ws.dialogueOverlayColor,
     overlayFontSize: ws.dialogueOverlayFontSize,
     showTimecode:   ws.boothTimecodeEnabled,
@@ -4480,6 +4614,7 @@ function deselectCue() {
   // Clear In/Out region and loop — return to neutral spotting state
   regionInFrames  = null;
   regionOutFrames = null;
+  regionStreamerStartFrames = null;
   isLooping       = false;
   updateRegionPanelUI();
   updateRegionHighlight();
@@ -5239,6 +5374,25 @@ function commitWaveformAreaHeight() {
   saveWorkspaceSettings({ persist: true }).catch(() => {});
 }
 
+function setWaveformVisualScaleFromClientY(clientY) {
+  const rect = els.waveformScaleControl.getBoundingClientRect();
+  const ratio = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+  waveformVisualScale = 0.05 + ratio * 0.95;
+  els.waveformScaleControl.setAttribute('aria-valuenow', waveformVisualScale.toFixed(2));
+  els.waveformScaleHandle.style.top = `${(1 - ratio) * 100}%`;
+  renderAll();
+}
+
+els.waveformScaleControl?.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  els.waveformScaleControl.setPointerCapture(e.pointerId);
+  setWaveformVisualScaleFromClientY(e.clientY);
+});
+els.waveformScaleControl?.addEventListener('pointermove', e => {
+  if (!els.waveformScaleControl.hasPointerCapture(e.pointerId)) return;
+  setWaveformVisualScaleFromClientY(e.clientY);
+});
+
 els.timelineResizeHandle?.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   e.stopPropagation();
@@ -5282,25 +5436,6 @@ els.timelineResizeHandle?.addEventListener('keydown', (e) => {
 
 window.addEventListener('resize', () => {
   applyWaveformAreaHeight(ws.waveformHeightPx || wsDefaults.waveformHeightPx);
-});
-
-function setWaveformVisualScaleFromClientY(clientY) {
-  const rect = els.waveformScaleControl.getBoundingClientRect();
-  const ratio = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-  waveformVisualScale = 0.05 + ratio * 0.95;
-  els.waveformScaleControl.setAttribute('aria-valuenow', waveformVisualScale.toFixed(2));
-  els.waveformScaleHandle.style.top = `${(1 - ratio) * 100}%`;
-  renderAll();
-}
-
-els.waveformScaleControl?.addEventListener('pointerdown', e => {
-  e.preventDefault();
-  els.waveformScaleControl.setPointerCapture(e.pointerId);
-  setWaveformVisualScaleFromClientY(e.clientY);
-});
-els.waveformScaleControl?.addEventListener('pointermove', e => {
-  if (!els.waveformScaleControl.hasPointerCapture(e.pointerId)) return;
-  setWaveformVisualScaleFromClientY(e.clientY);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -5521,8 +5656,8 @@ els.audioEngineDeviceSelect.addEventListener('change', () => {
   };
   renderNativeLaneSourceOptions(getSelectedNativeDevice());
   renderNativeOutputOptions(getSelectedNativeDevice());
-  els.btnOpenAudioEngineDevice.disabled = !els.audioEngineDeviceSelect.value;
-  els.btnOpenAudioEngineDiagnostic.disabled = !els.audioEngineDeviceSelect.value;
+  els.btnOpenAudioEngineDevice.disabled = nativeAudioPanelBusy || !els.audioEngineDeviceSelect.value;
+  els.btnOpenAudioEngineDiagnostic.disabled = nativeAudioPanelBusy || !els.audioEngineDeviceSelect.value;
   updateNativeRecordButtons(false);
   saveNativeAudioSetup().catch(err => setStatusWarn('Audio setup save failed: ' + err.message));
 });
@@ -5636,6 +5771,9 @@ els.btnNativeRecordStop.addEventListener('click', stopNativeInputRecording);
   configureNativeMonitoring();
 }));
 els.btnMarkIn.addEventListener('click',  markIn);
+els.btnStreamerTarget.addEventListener('click', () => {
+  setStreamerTargetAtCurrentPlayhead().catch(err => setStatusError(err.message));
+});
 els.btnMarkOut.addEventListener('click', markOut);
 els.btnLoop.addEventListener('click',    toggleLoop);
 
@@ -6365,7 +6503,6 @@ document.addEventListener('keydown', (e) => {
     renderKeyboardShortcuts();
     return;
   }
-
   // Never fire shortcuts when an input or textarea is focused
   if (isEditableShortcutTarget(e.target)) return;
   const pressedShortcut = eventToShortcut(e);
@@ -6411,6 +6548,7 @@ document.addEventListener('keydown', (e) => {
       if (regionInFrames !== null || regionOutFrames !== null) {
         regionInFrames = null;
         regionOutFrames = null;
+        regionStreamerStartFrames = null;
         isLooping = false;
         cancelPreroll();
         updateRegionPanelUI();
@@ -6428,6 +6566,12 @@ document.addEventListener('keydown', (e) => {
       if (regionInFrames !== null && regionOutFrames !== null
           && regionOutFrames > regionInFrames && !selectedCueId && currentProject) {
         e.preventDefault(); showCreateCueModal();
+      }
+      break;
+    case 's': case 'S':
+      if (regionInFrames !== null && regionOutFrames !== null && regionOutFrames > regionInFrames) {
+        e.preventDefault();
+        setStreamerTargetAtCurrentPlayhead().catch(err => setStatusError(err.message));
       }
       break;
     case 'i': case 'I': markIn();  break;
@@ -6539,16 +6683,21 @@ function hydrateBoothState() {
     const chars = currentProject.characters || [];
     const char  = chars.find(c => c.characterId === cue?.characterId);
     if (cue) {
+      const cueInTime = framesToSeconds(cue.inFrames);
       boothSend({
         type:            'cueSelected',
         cueNumber:       cue.cueNumber,
         characterName:   char?.name || '',
         dialogue:        cue.dialogue || '',
+        inTime:          cueInTime,
+        outTime:         framesToSeconds(cue.outFrames),
+        streamerTargetTime: typeof cue.streamerStartFrames === 'number' ? framesToSeconds(cue.streamerStartFrames) : null,
         overlayColor:    ws.dialogueOverlayColor,
         overlayFontSize: ws.dialogueOverlayFontSize,
         showTimecode:    ws.boothTimecodeEnabled,
         frameRate:       currentProject?.settings?.frameRate || '25',
       });
+      boothSend({ type: 'cuePrimed', currentTime: cueInTime });
     }
   }
 }
@@ -6567,6 +6716,12 @@ els.btnOpenBooth.addEventListener('click', async () => {
 
 window.api.onApp.boothClosed(() => {
   els.btnOpenBooth.classList.remove('open');
+});
+
+window.api.onApp.boothTransportCommand?.((command) => {
+  if (command?.type === 'ready' && Number.isFinite(command.commandId)) {
+    boothReadyWaiters.get(command.commandId)?.();
+  }
 });
 
 // ── Actor Manager ─────────────────────────────────────────────────────────────

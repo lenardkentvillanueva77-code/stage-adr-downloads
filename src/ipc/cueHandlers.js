@@ -92,7 +92,7 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
   // ── Create Cue ────────────────────────────────────────────────────────────
   ipcMain.handle('cue:createCue', async (_event, {
-    characterId, inFrames, outFrames, dialogue, notes,
+    characterId, inFrames, outFrames, streamerStartFrames, dialogue, notes,
   }) => {
     let project = getProject();
     if (!project) return { success: false, error: 'No project is open.' };
@@ -124,6 +124,7 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
       notes:       notes    || '',
       inFrames,
       outFrames,
+      streamerStartFrames: typeof streamerStartFrames === 'number' ? streamerStartFrames : null,
     });
 
     project = addCue(project, cue);
@@ -145,7 +146,7 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
     // Whitelist the fields that can be patched
     // actorId is explicit — not a pass-through unknown field
-    const allowed = ['dialogue', 'notes', 'characterId', 'status', 'actorId'];
+    const allowed = ['dialogue', 'notes', 'characterId', 'status', 'actorId', 'streamerStartFrames'];
     const safePatch = {};
     for (const key of allowed) {
       if (key in patch) safePatch[key] = patch[key];
@@ -166,6 +167,16 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
         }
       } else {
         safePatch.actorId = null;   // normalise undefined → null
+      }
+    }
+
+    if ('streamerStartFrames' in safePatch) {
+      if (safePatch.streamerStartFrames === null || safePatch.streamerStartFrames === undefined || safePatch.streamerStartFrames === '') {
+        safePatch.streamerStartFrames = null;
+      } else if (typeof safePatch.streamerStartFrames === 'number') {
+        safePatch.streamerStartFrames = Math.max(0, Math.round(safePatch.streamerStartFrames));
+      } else {
+        return { success: false, error: 'streamerStartFrames must be null or a number.' };
       }
     }
 
