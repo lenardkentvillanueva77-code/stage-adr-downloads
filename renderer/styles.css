@@ -870,6 +870,7 @@ body.timeline-resizing {
 .waveform-canvas { display: block; width: 100%; height: var(--waveform-height); image-rendering: pixelated; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--playhead-color); pointer-events: none; left: 0; box-shadow: 0 0 4px rgba(255,68,68,0.5); z-index: 10; }
 .region-highlight { position: absolute; top: 0; bottom: 0; background: var(--waveform-region); border-left: 1px solid var(--waveform-region-border); border-right: 1px solid var(--waveform-region-border); pointer-events: none; z-index: 5; display: none; }
+.streamer-marker-layer { position: absolute; inset: 0; pointer-events: none; z-index: 12; }
 .region-marker { position: absolute; top: 0; font-size: 9px; font-weight: 700; padding: 1px 4px; z-index: 12; pointer-events: none; letter-spacing: 0.05em; }
 .marker-in  { background: var(--marker-in-color);  color: #000; border-radius: 0 0 2px 0; }
 .marker-streamer { background: var(--marker-streamer-color); color: #000; border-radius: 0 0 2px 2px; transform: translateX(-50%); }

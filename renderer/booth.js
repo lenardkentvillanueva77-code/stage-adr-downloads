@@ -30,7 +30,8 @@ let currentOverlayFontSize = 'medium';
 let cueInTime = 0;
 let cueOutTime = 0;
 let streamerTargetTime = null;
-let streamerHitGeneration = -1;
+let streamerTargetTimes = [];
+let streamerHitIndex = -1;
 
 function showIdle() {
   idle.classList.remove('hidden');
@@ -99,7 +100,7 @@ function nextTransportGeneration(msg) {
   } else {
     transportGeneration += 1;
   }
-  streamerHitGeneration = -1;
+  streamerHitIndex = -1;
   return transportGeneration;
 }
 
@@ -189,12 +190,61 @@ function splitDialogueLines(text) {
   return { line1, line2 };
 }
 
+function getDialogueSegments(text) {
+  return String(text || '')
+    .split('//')
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeStreamerTargetTimes(times) {
+  if (!Array.isArray(times)) return [];
+  return [...new Set(
+    times
+      .filter(time => typeof time === 'number' && Number.isFinite(time))
+      .map(time => Math.max(0, time))
+  )].sort((a, b) => a - b);
+}
+
+function getStreamerSequenceState() {
+  const dialogueSegments = getDialogueSegments(currentDialogue);
+  const fallbackText = String(currentDialogue || '').replaceAll('//', ' ').trim();
+  const fallbackSegments = fallbackText ? [fallbackText] : [];
+  const targets = Array.isArray(streamerTargetTimes) && streamerTargetTimes.length
+    ? normalizeStreamerTargetTimes(streamerTargetTimes)
+    : (Number.isFinite(streamerTargetTime) ? [streamerTargetTime] : []);
+
+  if (targets.length >= 1 && dialogueSegments.length === targets.length) {
+    return {
+      enabled: true,
+      segments: dialogueSegments,
+      targets,
+    };
+  }
+
+  return {
+    enabled: false,
+    segments: fallbackSegments,
+    targets: [],
+  };
+}
+
+function getCurrentDialogueText() {
+  const state = getStreamerSequenceState();
+  if (!state.segments.length) return '';
+  if (!state.enabled || !state.targets.length) return state.segments[0];
+  const playbackTime = video.currentTime || 0;
+  const completedHits = state.targets.filter(time => playbackTime >= time).length;
+  const segmentIndex = Math.min(completedHits, state.segments.length - 1);
+  return state.segments[segmentIndex] || state.segments[0];
+}
+
 function renderDialogue() {
   dlgOverlay.style.color = currentOverlayColor;
   dlgOverlay.classList.remove('size-small', 'size-medium', 'size-large');
   dlgOverlay.classList.add(`size-${currentOverlayFontSize || 'medium'}`);
 
-  const trimmed = String(currentDialogue || '').trim();
+  const trimmed = getCurrentDialogueText().trim();
   if (!hasCue || !trimmed) {
     dlgLine1.textContent = '';
     dlgLine2.textContent = '';
@@ -222,12 +272,21 @@ function flashStreamerHit(anchorX) {
 }
 
 function updateStreamer() {
-  const targetTime = streamerTargetTime;
+  const sequence = getStreamerSequenceState();
+  renderDialogue();
+  const playbackTime = video.currentTime || 0;
+  const completedHits = sequence.targets.filter(time => playbackTime >= time).length;
+  if (completedHits - 1 > streamerHitIndex) {
+    streamerHitIndex = completedHits - 1;
+    if (streamerHitIndex >= 0) flashStreamerHit(window.innerWidth * 0.5);
+  }
+  const nextTargetIndex = sequence.targets.findIndex(time => playbackTime < time);
+  const targetTime = nextTargetIndex >= 0 ? sequence.targets[nextTargetIndex] : null;
   if (
     !hasCue ||
+    !sequence.enabled ||
     typeof targetTime !== 'number' ||
     !isFinite(targetTime) ||
-    !(targetTime > cueInTime) ||
     video.paused
   ) {
     hideStreamer();
@@ -236,8 +295,14 @@ function updateStreamer() {
   }
 
   const anchorX = window.innerWidth * 0.5;
-  const elapsed = Math.max(0, (video.currentTime || 0) - cueInTime);
-  const targetLeadSeconds = targetTime - cueInTime;
+  const segmentStartTime = nextTargetIndex === 0 ? cueInTime : sequence.targets[nextTargetIndex - 1];
+  const elapsed = Math.max(0, playbackTime - segmentStartTime);
+  const targetLeadSeconds = targetTime - segmentStartTime;
+  if (!(targetLeadSeconds > 0)) {
+    hideStreamer();
+    requestAnimationFrame(updateStreamer);
+    return;
+  }
   const pixelsPerSecond = anchorX / targetLeadSeconds;
   const barWidth = streamerBar.offsetWidth || 18;
   const leadingX = elapsed * pixelsPerSecond;
@@ -251,11 +316,6 @@ function updateStreamer() {
 
   streamerBar.style.transform = `translateX(${left}px)`;
   streamerBar.classList.add('visible');
-
-  if (leadingX >= anchorX && streamerHitGeneration !== transportGeneration) {
-    streamerHitGeneration = transportGeneration;
-    flashStreamerHit(anchorX);
-  }
 
   requestAnimationFrame(updateStreamer);
 }
@@ -286,6 +346,9 @@ window.booth.onUpdate((msg) => {
       cueInTime = Number.isFinite(msg.inTime) ? msg.inTime : 0;
       cueOutTime = Number.isFinite(msg.outTime) ? msg.outTime : cueInTime;
       streamerTargetTime = Number.isFinite(msg.streamerTargetTime) ? msg.streamerTargetTime : null;
+      streamerTargetTimes = Array.isArray(msg.streamerTargetTimes)
+        ? msg.streamerTargetTimes.filter(time => Number.isFinite(time))
+        : (Number.isFinite(streamerTargetTime) ? [streamerTargetTime] : []);
       charBadge.textContent = msg.characterName || '';
       charBadge.classList.toggle('visible', !!(msg.characterName || '').trim());
       applyDisplaySettings(msg);
@@ -309,6 +372,7 @@ window.booth.onUpdate((msg) => {
       cueInTime = 0;
       cueOutTime = 0;
       streamerTargetTime = null;
+      streamerTargetTimes = [];
       cancelPlay();
       video.pause();
       clearCountdown();

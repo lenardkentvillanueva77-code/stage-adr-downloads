@@ -25,6 +25,7 @@ const CUE_STATUSES = ['open', 'recorded', 'approved', 'omit'];
  * @param {number} opts.inFrames
  * @param {number} opts.outFrames
  * @param {number|null} [opts.streamerStartFrames]
+ * @param {number[]|null} [opts.streamerTargetFrames]
  * @param {string} [opts.notes]
  * @param {string|null} [opts.actorId]
  * @returns {object}
@@ -38,10 +39,18 @@ function createCue({
   inFrames,
   outFrames,
   streamerStartFrames = null,
+  streamerTargetFrames = null,
   notes = '',
   actorId = null,
 }) {
   const now = nowISO();
+  const normalizedStreamerTargets = Array.isArray(streamerTargetFrames)
+    ? [...new Set(
+        streamerTargetFrames
+          .filter(frame => typeof frame === 'number' && Number.isFinite(frame))
+          .map(frame => Math.max(0, Math.round(frame)))
+      )].sort((a, b) => a - b)
+    : (typeof streamerStartFrames === 'number' ? [Math.max(0, Math.round(streamerStartFrames))] : []);
 
   return {
     cueId: generateId(),
@@ -54,9 +63,8 @@ function createCue({
 
     inFrames: Math.max(0, Math.round(inFrames ?? 0)),
     outFrames: Math.max(0, Math.round(outFrames ?? 0)),
-    streamerStartFrames: typeof streamerStartFrames === 'number'
-      ? Math.max(0, Math.round(streamerStartFrames))
-      : null,
+    streamerStartFrames: normalizedStreamerTargets.length ? normalizedStreamerTargets[0] : null,
+    streamerTargetFrames: normalizedStreamerTargets,
 
     status: 'open',
     notes: (notes || '').trim(),
@@ -84,6 +92,14 @@ function validateCueShape(obj) {
   if (typeof obj.outFrames !== 'number') return { valid: false, reason: 'Cue missing outFrames.' };
   if (obj.streamerStartFrames !== undefined && obj.streamerStartFrames !== null && typeof obj.streamerStartFrames !== 'number') {
     return { valid: false, reason: 'Cue streamerStartFrames must be null or a number.' };
+  }
+  if (obj.streamerTargetFrames !== undefined && obj.streamerTargetFrames !== null) {
+    if (!Array.isArray(obj.streamerTargetFrames)) {
+      return { valid: false, reason: 'Cue streamerTargetFrames must be null or an array.' };
+    }
+    if (!obj.streamerTargetFrames.every(frame => typeof frame === 'number')) {
+      return { valid: false, reason: 'Cue streamerTargetFrames entries must all be numbers.' };
+    }
   }
   if (!CUE_STATUSES.includes(obj.status)) {
     return { valid: false, reason: `Cue has invalid status: ${obj.status}` };

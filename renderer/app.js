@@ -67,7 +67,7 @@ let peakData = null;
 
 let regionInFrames  = null;
 let regionOutFrames = null;
-let regionStreamerStartFrames = null;
+let regionStreamerTargetFrames = [];
 
 let isPlaying = false;
 let isLooping = false;
@@ -277,6 +277,56 @@ async function boothSendFlush(payload) {
   return outbound?.commandId || null;
 }
 
+function normalizeStreamerTargetFrames(list) {
+  if (!Array.isArray(list)) return [];
+  return [...new Set(
+    list
+      .filter(frame => typeof frame === 'number' && Number.isFinite(frame))
+      .map(frame => Math.max(0, Math.round(frame)))
+  )].sort((a, b) => a - b);
+}
+
+function getCueStreamerTargetFrames(cue) {
+  if (Array.isArray(cue?.streamerTargetFrames)) {
+    return normalizeStreamerTargetFrames(cue.streamerTargetFrames);
+  }
+  if (typeof cue?.streamerStartFrames === 'number') {
+    return [Math.max(0, Math.round(cue.streamerStartFrames))];
+  }
+  return [];
+}
+
+function getDialogueStreamerSegments(text) {
+  return String(text || '')
+    .split('//')
+    .map(part => part.trim())
+    .filter(Boolean);
+}
+
+function cueHasValidStreamerSequence(cue) {
+  const targets = getCueStreamerTargetFrames(cue);
+  if (!targets.length) return false;
+  return getDialogueStreamerSegments(cue?.dialogue || '').length === targets.length;
+}
+
+function getCueBoothPayload(cue, characterName = '') {
+  const streamerTargetFrames = cueHasValidStreamerSequence(cue) ? getCueStreamerTargetFrames(cue) : [];
+  return {
+    type: 'cueSelected',
+    cueNumber: cue.cueNumber,
+    characterName,
+    dialogue: cue.dialogue || '',
+    inTime: framesToSeconds(cue.inFrames),
+    outTime: framesToSeconds(cue.outFrames),
+    streamerTargetTime: streamerTargetFrames.length ? framesToSeconds(streamerTargetFrames[0]) : null,
+    streamerTargetTimes: streamerTargetFrames.map(frame => framesToSeconds(frame)),
+    overlayColor: ws.dialogueOverlayColor,
+    overlayFontSize: ws.dialogueOverlayFontSize,
+    showTimecode: ws.boothTimecodeEnabled,
+    frameRate: currentProject?.settings?.frameRate || '25',
+  };
+}
+
 function waitForBoothReady(commandId, timeoutMs = 350) {
   if (!commandId) return Promise.resolve(false);
   return new Promise(resolve => {
@@ -380,7 +430,7 @@ const els = {
   playhead:               document.getElementById('playhead'),
   regionHighlight:        document.getElementById('region-highlight'),
   markerIn:               document.getElementById('marker-in'),
-  markerStreamer:         document.getElementById('marker-streamer'),
+  streamerMarkerLayer:    document.getElementById('streamer-marker-layer'),
   markerOut:              document.getElementById('marker-out'),
   timelineScrollbarTrack: document.getElementById('timeline-scrollbar-track'),
   timelineScrollbarThumb: document.getElementById('timeline-scrollbar-thumb'),
@@ -2205,7 +2255,7 @@ function updateRegionHighlight() {
   if (!peakData || canvasWidth === 0) {
     els.regionHighlight.style.display = 'none';
     els.markerIn.classList.add('hidden');
-    els.markerStreamer.classList.add('hidden');
+    if (els.streamerMarkerLayer) els.streamerMarkerLayer.innerHTML = '';
     els.markerOut.classList.add('hidden');
     els.infoRegionChip.classList.add('hidden');
     return;
@@ -2214,7 +2264,7 @@ function updateRegionHighlight() {
   if (!hasRegion) {
     els.regionHighlight.style.display = 'none';
     els.markerIn.classList.add('hidden');
-    els.markerStreamer.classList.add('hidden');
+    if (els.streamerMarkerLayer) els.streamerMarkerLayer.innerHTML = '';
     els.markerOut.classList.add('hidden');
     els.infoRegionChip.classList.add('hidden');
     return;
@@ -2226,17 +2276,19 @@ function updateRegionHighlight() {
   els.regionHighlight.style.width   = `${Math.max(1, xOut - xIn)}px`;
   if (xIn >= -1 && xIn <= canvasWidth + 1) { els.markerIn.classList.remove('hidden'); els.markerIn.style.left = `${Math.max(0, xIn)}px`; }
   else { els.markerIn.classList.add('hidden'); }
-  const streamerFrames = getActiveStreamerTargetFrames();
-  if (typeof streamerFrames === 'number' && streamerFrames >= regionInFrames && streamerFrames <= regionOutFrames) {
-    const xStreamer = secondsToViewX(framesToSeconds(streamerFrames));
-    if (xStreamer >= -1 && xStreamer <= canvasWidth + 1) {
-      els.markerStreamer.classList.remove('hidden');
-      els.markerStreamer.style.left = `${Math.max(0, Math.min(canvasWidth, xStreamer))}px`;
-    } else {
-      els.markerStreamer.classList.add('hidden');
+  if (els.streamerMarkerLayer) {
+    els.streamerMarkerLayer.innerHTML = '';
+    const streamerFrames = getActiveStreamerTargetFrames();
+    for (const streamerFrame of streamerFrames) {
+      if (streamerFrame < regionInFrames || streamerFrame > regionOutFrames) continue;
+      const xStreamer = secondsToViewX(framesToSeconds(streamerFrame));
+      if (xStreamer < -1 || xStreamer > canvasWidth + 1) continue;
+      const marker = document.createElement('div');
+      marker.className = 'region-marker marker-streamer';
+      marker.textContent = 'S';
+      marker.style.left = `${Math.max(0, Math.min(canvasWidth, xStreamer))}px`;
+      els.streamerMarkerLayer.appendChild(marker);
     }
-  } else {
-    els.markerStreamer.classList.add('hidden');
   }
   if (xOut >= -1 && xOut <= canvasWidth + 1) { els.markerOut.classList.remove('hidden'); els.markerOut.style.left = `${Math.min(canvasWidth, xOut)}px`; }
   else { els.markerOut.classList.add('hidden'); }
@@ -2974,8 +3026,11 @@ function markIn() {
   if (!currentProject || els.videoPlayer.readyState < 1) return;
   regionInFrames = secondsToFrames(els.videoPlayer.currentTime);
   if (regionOutFrames !== null && regionOutFrames <= regionInFrames) regionOutFrames = null;
-  const nextStreamer = clampStreamerTargetFrames(regionStreamerStartFrames);
-  regionStreamerStartFrames = nextStreamer;
+  regionStreamerTargetFrames = normalizeStreamerTargetFrames(
+    regionStreamerTargetFrames
+      .map(frame => clampStreamerTargetFrames(frame))
+      .filter(frame => frame !== null)
+  );
   updateRegionPanelUI();
   updateRegionHighlight();
   updateCreateCueButton();
@@ -2990,8 +3045,11 @@ function markOut() {
     setStatusWarn('Mark Out must be after Mark In.'); return;
   }
   regionOutFrames = f;
-  const nextStreamer = clampStreamerTargetFrames(regionStreamerStartFrames);
-  regionStreamerStartFrames = nextStreamer;
+  regionStreamerTargetFrames = normalizeStreamerTargetFrames(
+    regionStreamerTargetFrames
+      .map(frame => clampStreamerTargetFrames(frame))
+      .filter(frame => frame !== null)
+  );
   updateRegionPanelUI();
   updateRegionHighlight();
   updateCreateCueButton();
@@ -3009,7 +3067,7 @@ function updateRegionPanelUI() {
     els.regionInFramesEl.textContent = '—';
     els.btnMarkIn.classList.remove('btn-mark-in-active');
   }
-  els.btnStreamerTarget.classList.toggle('btn-streamer-active', typeof getActiveStreamerTargetFrames() === 'number');
+  els.btnStreamerTarget.classList.toggle('btn-streamer-active', getActiveStreamerTargetFrames().length > 0);
   if (regionOutFrames !== null) {
     els.regionOutTc.textContent       = framesToTC(regionOutFrames);
     els.regionOutFramesEl.textContent = `${regionOutFrames} f`;
@@ -3033,9 +3091,9 @@ function updateRegionPanelUI() {
 function getActiveStreamerTargetFrames() {
   if (selectedCueId && currentProject) {
     const cue = currentProject.cues.find(c => c.cueId === selectedCueId);
-    return typeof cue?.streamerStartFrames === 'number' ? cue.streamerStartFrames : null;
+    return getCueStreamerTargetFrames(cue);
   }
-  return typeof regionStreamerStartFrames === 'number' ? regionStreamerStartFrames : null;
+  return normalizeStreamerTargetFrames(regionStreamerTargetFrames);
 }
 
 function clampStreamerTargetFrames(frame) {
@@ -3051,9 +3109,25 @@ async function setStreamerTargetAtCurrentPlayhead() {
   }
   const targetFrame = clampStreamerTargetFrames(secondsToFrames(els.videoPlayer.currentTime || 0));
   if (targetFrame === null) return;
+  const toggleFrames = (frames) => {
+    const normalized = normalizeStreamerTargetFrames(frames);
+    const existingIndex = normalized.findIndex(frame => frame === targetFrame);
+    if (existingIndex >= 0) {
+      return {
+        frames: normalized.filter((_frame, index) => index !== existingIndex),
+        removed: true,
+      };
+    }
+    return {
+      frames: normalizeStreamerTargetFrames([...normalized, targetFrame]),
+      removed: false,
+    };
+  };
 
   if (selectedCueId && currentProject) {
-    const result = await window.api.cue.updateCue(selectedCueId, { streamerStartFrames: targetFrame });
+    const cue = currentProject.cues.find(c => c.cueId === selectedCueId);
+    const nextTargets = toggleFrames(getCueStreamerTargetFrames(cue));
+    const result = await window.api.cue.updateCue(selectedCueId, { streamerTargetFrames: nextTargets.frames });
     if (!result.success) {
       setStatusError(`Streamer target save failed: ${result.error}`);
       return;
@@ -3061,34 +3135,23 @@ async function setStreamerTargetAtCurrentPlayhead() {
     currentProject = result.project;
     const updatedCue = currentProject.cues.find(c => c.cueId === selectedCueId);
     if (updatedCue) {
-      regionStreamerStartFrames = updatedCue.streamerStartFrames;
+      regionStreamerTargetFrames = getCueStreamerTargetFrames(updatedCue);
       showCueDetail(updatedCue);
       const chars = currentProject.characters || [];
       const char = chars.find(c => c.characterId === updatedCue.characterId);
-      boothSend({
-        type: 'cueSelected',
-        cueNumber: updatedCue.cueNumber,
-        characterName: char?.name || '',
-        dialogue: updatedCue.dialogue || '',
-        inTime: framesToSeconds(updatedCue.inFrames),
-        outTime: framesToSeconds(updatedCue.outFrames),
-        streamerTargetTime: typeof updatedCue.streamerStartFrames === 'number' ? framesToSeconds(updatedCue.streamerStartFrames) : null,
-        overlayColor: ws.dialogueOverlayColor,
-        overlayFontSize: ws.dialogueOverlayFontSize,
-        showTimecode: ws.boothTimecodeEnabled,
-        frameRate: currentProject?.settings?.frameRate || '25',
-      });
+      boothSend(getCueBoothPayload(updatedCue, char?.name || ''));
     }
     updateRegionPanelUI();
     updateRegionHighlight();
-    setStatusInfo(`Streamer target set at ${framesToTC(targetFrame)}.`);
+    setStatusInfo(nextTargets.removed ? `Streamer target cleared at ${framesToTC(targetFrame)}.` : `Streamer target set at ${framesToTC(targetFrame)}.`);
     return;
   }
 
-  regionStreamerStartFrames = targetFrame;
+  const nextTargets = toggleFrames(regionStreamerTargetFrames);
+  regionStreamerTargetFrames = nextTargets.frames;
   updateRegionPanelUI();
   updateRegionHighlight();
-  setStatusInfo(`Streamer target prepared at ${framesToTC(targetFrame)}.`);
+  setStatusInfo(nextTargets.removed ? `Streamer target cleared at ${framesToTC(targetFrame)}.` : `Streamer target prepared at ${framesToTC(targetFrame)}.`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4313,7 +4376,7 @@ async function submitCreateCue() {
     characterId,
     inFrames:  regionInFrames,
     outFrames: regionOutFrames,
-    streamerStartFrames: regionStreamerStartFrames,
+    streamerTargetFrames: regionStreamerTargetFrames,
     dialogue:  '',
     notes:     '',
   });
@@ -4325,7 +4388,7 @@ async function submitCreateCue() {
   }
 
   currentProject = cueResult.project;
-  regionStreamerStartFrames = null;
+  regionStreamerTargetFrames = [];
   renderCueList();
   rebuildCharacterFilter();
 
@@ -4548,7 +4611,7 @@ function selectCue(cueId) {
   // Set region to cue timing
   regionInFrames  = cue.inFrames;
   regionOutFrames = cue.outFrames;
-  regionStreamerStartFrames = typeof cue.streamerStartFrames === 'number' ? cue.streamerStartFrames : null;
+  regionStreamerTargetFrames = getCueStreamerTargetFrames(cue);
   updateRegionPanelUI();
   updateRegionHighlight();
   updateLoopButton();
@@ -4582,19 +4645,7 @@ function selectCue(cueId) {
   // Notify booth — low frequency, not awaited
   const chars2 = currentProject?.characters || [];
   const char2  = chars2.find(c => c.characterId === cue.characterId);
-  boothSend({
-    type:           'cueSelected',
-    cueNumber:      cue.cueNumber,
-    characterName:  char2?.name || '',
-    dialogue:       cue.dialogue || '',
-    inTime:         inSec,
-    outTime:        framesToSeconds(cue.outFrames),
-    streamerTargetTime: typeof cue.streamerStartFrames === 'number' ? framesToSeconds(cue.streamerStartFrames) : null,
-    overlayColor:   ws.dialogueOverlayColor,
-    overlayFontSize: ws.dialogueOverlayFontSize,
-    showTimecode:   ws.boothTimecodeEnabled,
-    frameRate:      currentProject?.settings?.frameRate || '25',
-  });
+  boothSend(getCueBoothPayload(cue, char2?.name || ''));
   // Prime booth video at the cue in-point so it is seeked and ready
   // before the first loop pass triggers cueLoopRestart + countdown.
   boothSend({ type: 'cuePrimed', currentTime: inSec });
@@ -4614,7 +4665,7 @@ function deselectCue() {
   // Clear In/Out region and loop — return to neutral spotting state
   regionInFrames  = null;
   regionOutFrames = null;
-  regionStreamerStartFrames = null;
+  regionStreamerTargetFrames = [];
   isLooping       = false;
   updateRegionPanelUI();
   updateRegionHighlight();
@@ -4723,8 +4774,12 @@ async function saveCueEdits() {
   // Refresh overlay if dialogue changed
   updateDialogueOverlay();
 
-  // Notify booth of updated dialogue text
-  if (updated) boothSend({ type: 'dialogueChanged', dialogue: updated.dialogue || '' });
+  // Notify booth of updated cue payload so streamer validation stays in sync
+  if (updated) {
+    const chars = currentProject.characters || [];
+    const char = chars.find(c => c.characterId === updated.characterId);
+    boothSend(getCueBoothPayload(updated, char?.name || ''));
+  }
 
   markUnsaved();
   setStatusOk('Cue saved.');
@@ -6539,16 +6594,16 @@ document.addEventListener('keydown', (e) => {
         break;
       }
       // Priority 2: deselect active cue (also clears region and loop)
-      if (selectedCueId) {
-        deselectCue();
-        setStatusInfo('Cue deselected. In/Out cleared. Ready to spot.');
-        break;
-      }
+  if (selectedCueId) {
+    deselectCue();
+    setStatusInfo('Cue deselected. In/Out cleared. Ready to spot.');
+    break;
+  }
       // Priority 3: clear active In/Out range if one exists (neutral spotting state)
       if (regionInFrames !== null || regionOutFrames !== null) {
         regionInFrames = null;
         regionOutFrames = null;
-        regionStreamerStartFrames = null;
+        regionStreamerTargetFrames = [];
         isLooping = false;
         cancelPreroll();
         updateRegionPanelUI();
@@ -6684,19 +6739,7 @@ function hydrateBoothState() {
     const char  = chars.find(c => c.characterId === cue?.characterId);
     if (cue) {
       const cueInTime = framesToSeconds(cue.inFrames);
-      boothSend({
-        type:            'cueSelected',
-        cueNumber:       cue.cueNumber,
-        characterName:   char?.name || '',
-        dialogue:        cue.dialogue || '',
-        inTime:          cueInTime,
-        outTime:         framesToSeconds(cue.outFrames),
-        streamerTargetTime: typeof cue.streamerStartFrames === 'number' ? framesToSeconds(cue.streamerStartFrames) : null,
-        overlayColor:    ws.dialogueOverlayColor,
-        overlayFontSize: ws.dialogueOverlayFontSize,
-        showTimecode:    ws.boothTimecodeEnabled,
-        frameRate:       currentProject?.settings?.frameRate || '25',
-      });
+      boothSend(getCueBoothPayload(cue, char?.name || ''));
       boothSend({ type: 'cuePrimed', currentTime: cueInTime });
     }
   }

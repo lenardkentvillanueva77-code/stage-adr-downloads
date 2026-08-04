@@ -60,6 +60,16 @@ function _getProject(ipcHandlers) {
   return ipcHandlers._project;
 }
 
+function normalizeStreamerTargets(value) {
+  if (value === null || value === undefined || value === '') return [];
+  if (!Array.isArray(value)) return null;
+  return [...new Set(
+    value
+      .filter(frame => typeof frame === 'number' && Number.isFinite(frame))
+      .map(frame => Math.max(0, Math.round(frame)))
+  )].sort((a, b) => a - b);
+}
+
 function register(ipcMain, _getWindow, projectHandlerExports) {
   // projectHandlerExports exposes { getProject, getProjectFilePath }
   // so cueHandlers can read and write _project without duplicating state.
@@ -92,7 +102,7 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
   // ── Create Cue ────────────────────────────────────────────────────────────
   ipcMain.handle('cue:createCue', async (_event, {
-    characterId, inFrames, outFrames, streamerStartFrames, dialogue, notes,
+    characterId, inFrames, outFrames, streamerStartFrames, streamerTargetFrames, dialogue, notes,
   }) => {
     let project = getProject();
     if (!project) return { success: false, error: 'No project is open.' };
@@ -114,6 +124,16 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
       return { success: false, error: 'Project frame rate is not set. Load a video first.' };
     }
 
+    const normalizedStreamerTargets = Array.isArray(streamerTargetFrames)
+      ? normalizeStreamerTargets(streamerTargetFrames)
+      : (typeof streamerStartFrames === 'number' ? [Math.max(0, Math.round(streamerStartFrames))] : []);
+    if (normalizedStreamerTargets === null) {
+      return { success: false, error: 'streamerTargetFrames must be an array of numbers.' };
+    }
+    if (normalizedStreamerTargets.some(frame => frame < inFrames || frame > outFrames)) {
+      return { success: false, error: 'Streamer targets must stay within the cue in/out range.' };
+    }
+
     const cueNumber = nextCueNumber(project.cues);
 
     const cue = createCue({
@@ -124,7 +144,8 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
       notes:       notes    || '',
       inFrames,
       outFrames,
-      streamerStartFrames: typeof streamerStartFrames === 'number' ? streamerStartFrames : null,
+      streamerStartFrames: normalizedStreamerTargets[0] ?? null,
+      streamerTargetFrames: normalizedStreamerTargets,
     });
 
     project = addCue(project, cue);
@@ -146,7 +167,7 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
     // Whitelist the fields that can be patched
     // actorId is explicit — not a pass-through unknown field
-    const allowed = ['dialogue', 'notes', 'characterId', 'status', 'actorId', 'streamerStartFrames'];
+    const allowed = ['dialogue', 'notes', 'characterId', 'status', 'actorId', 'streamerStartFrames', 'streamerTargetFrames'];
     const safePatch = {};
     for (const key of allowed) {
       if (key in patch) safePatch[key] = patch[key];
@@ -170,14 +191,36 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
       }
     }
 
-    if ('streamerStartFrames' in safePatch) {
+    if ('streamerTargetFrames' in safePatch) {
+      const normalizedTargets = normalizeStreamerTargets(safePatch.streamerTargetFrames);
+      if (normalizedTargets === null) {
+        return { success: false, error: 'streamerTargetFrames must be an array of numbers.' };
+      }
+      safePatch.streamerTargetFrames = normalizedTargets;
+      safePatch.streamerStartFrames = normalizedTargets[0] ?? null;
+    } else if ('streamerStartFrames' in safePatch) {
       if (safePatch.streamerStartFrames === null || safePatch.streamerStartFrames === undefined || safePatch.streamerStartFrames === '') {
         safePatch.streamerStartFrames = null;
+        safePatch.streamerTargetFrames = [];
       } else if (typeof safePatch.streamerStartFrames === 'number') {
-        safePatch.streamerStartFrames = Math.max(0, Math.round(safePatch.streamerStartFrames));
+        const normalizedFrame = Math.max(0, Math.round(safePatch.streamerStartFrames));
+        safePatch.streamerStartFrames = normalizedFrame;
+        safePatch.streamerTargetFrames = [normalizedFrame];
       } else {
         return { success: false, error: 'streamerStartFrames must be null or a number.' };
       }
+    }
+
+    const effectiveInFrames = exists.inFrames;
+    const effectiveOutFrames = exists.outFrames;
+    const effectiveStreamerTargets = 'streamerTargetFrames' in safePatch
+      ? safePatch.streamerTargetFrames
+      : Array.isArray(exists.streamerTargetFrames)
+        ? exists.streamerTargetFrames
+        : (typeof exists.streamerStartFrames === 'number' ? [exists.streamerStartFrames] : []);
+
+    if (effectiveStreamerTargets.some(frame => frame < effectiveInFrames || frame > effectiveOutFrames)) {
+      return { success: false, error: 'Streamer target must stay within the cue in/out range.' };
     }
 
     project = updateCue(project, cueId, safePatch);
