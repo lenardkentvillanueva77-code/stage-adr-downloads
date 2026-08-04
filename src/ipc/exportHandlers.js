@@ -193,6 +193,9 @@ function register(ipcMain, getWindow) {
     const project = getProject();
     if (!project) return { success: false, error: 'No project is open.' };
     const exportRecordingOffsetMs = Number(opts.recordingOffsetMs);
+    const characterId = typeof opts.characterId === 'string' && opts.characterId.trim()
+      ? opts.characterId.trim()
+      : null;
     const projectForExport = Number.isFinite(exportRecordingOffsetMs)
       ? {
           ...project,
@@ -206,9 +209,14 @@ function register(ipcMain, getWindow) {
         }
       : project;
 
-    const selectedCount = (projectForExport.takes || []).filter(take => take.isSelected).length;
+    const cueById = new Map((projectForExport.cues || []).map(cue => [cue.cueId, cue]));
+    const selectedCount = (projectForExport.takes || []).filter(take => {
+      if (!take.isSelected) return false;
+      if (!characterId) return true;
+      return cueById.get(take.cueId)?.characterId === characterId;
+    }).length;
     if (!selectedCount) {
-      return { success: false, error: 'No good takes are selected.' };
+      return { success: false, error: characterId ? 'No good takes are selected for that character.' : 'No good takes are selected.' };
     }
 
     const win = getWindow();
@@ -225,6 +233,7 @@ function register(ipcMain, getWindow) {
       const result = exportGoodTakesPackage({
         project: projectForExport,
         destinationRoot: saveResult.filePaths[0],
+        characterId,
       });
       return { success: true, ...result };
     } catch (err) {

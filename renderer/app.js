@@ -286,6 +286,19 @@ function normalizeStreamerTargetFrames(list) {
   )].sort((a, b) => a - b);
 }
 
+function shiftStreamerTargetFrames(list, deltaFrames) {
+  const normalized = normalizeStreamerTargetFrames(list);
+  if (!normalized.length || !Number.isFinite(deltaFrames) || !deltaFrames) return normalized;
+  return normalizeStreamerTargetFrames(normalized.map(frame => frame + Math.round(deltaFrames)));
+}
+
+function streamerTargetFramesEqual(a, b) {
+  const left = normalizeStreamerTargetFrames(a);
+  const right = normalizeStreamerTargetFrames(b);
+  if (left.length !== right.length) return false;
+  return left.every((frame, index) => frame === right[index]);
+}
+
 function getCueStreamerTargetFrames(cue) {
   if (Array.isArray(cue?.streamerTargetFrames)) {
     return normalizeStreamerTargetFrames(cue.streamerTargetFrames);
@@ -307,6 +320,20 @@ function cueHasValidStreamerSequence(cue) {
   const targets = getCueStreamerTargetFrames(cue);
   if (!targets.length) return false;
   return getDialogueStreamerSegments(cue?.dialogue || '').length === targets.length;
+}
+
+function getCueTakeCount(cueId) {
+  if (!currentProject || !cueId) return 0;
+  return (currentProject.takes || []).filter(take => take.cueId === cueId).length;
+}
+
+function getCueById(cueId) {
+  if (!currentProject || !cueId) return null;
+  return currentProject.cues.find(cue => cue.cueId === cueId) || null;
+}
+
+function selectedCueAllowsTimingEdit() {
+  return !!selectedCueId && getCueTakeCount(selectedCueId) === 0;
 }
 
 function getCueBoothPayload(cue, characterName = '') {
@@ -598,6 +625,10 @@ const els = {
   inputPreparedBy:        document.getElementById('input-prepared-by'),
   btnExportModalCancel:   document.getElementById('btn-export-modal-cancel'),
   btnExportModalConfirm:  document.getElementById('btn-export-modal-confirm'),
+  modalExportCharacter:   document.getElementById('modal-export-character'),
+  exportCharacterSelect:  document.getElementById('export-character-select'),
+  btnExportCharacterCancel: document.getElementById('btn-export-character-cancel'),
+  btnExportCharacterConfirm: document.getElementById('btn-export-character-confirm'),
   modalExportResult:      document.getElementById('modal-export-result'),
   exportResultSubtitle:   document.getElementById('export-result-subtitle'),
   exportResultOffset:     document.getElementById('export-result-offset'),
@@ -3024,7 +3055,16 @@ async function resyncPlaybackTargetsForCurrentTimeline({
 
 function markIn() {
   if (!currentProject || els.videoPlayer.readyState < 1) return;
-  regionInFrames = secondsToFrames(els.videoPlayer.currentTime);
+  if (selectedCueId && !selectedCueAllowsTimingEdit()) {
+    setStatusWarn('Cue timing is locked after recording. Create a new cue if you need a different region.');
+    return;
+  }
+  const previousInFrames = regionInFrames;
+  const nextInFrames = secondsToFrames(els.videoPlayer.currentTime);
+  if (previousInFrames !== null && regionStreamerTargetFrames.length) {
+    regionStreamerTargetFrames = shiftStreamerTargetFrames(regionStreamerTargetFrames, nextInFrames - previousInFrames);
+  }
+  regionInFrames = nextInFrames;
   if (regionOutFrames !== null && regionOutFrames <= regionInFrames) regionOutFrames = null;
   regionStreamerTargetFrames = normalizeStreamerTargetFrames(
     regionStreamerTargetFrames
@@ -3040,6 +3080,10 @@ function markIn() {
 
 function markOut() {
   if (!currentProject || els.videoPlayer.readyState < 1) return;
+  if (selectedCueId && !selectedCueAllowsTimingEdit()) {
+    setStatusWarn('Cue timing is locked after recording. Create a new cue if you need a different region.');
+    return;
+  }
   const f = secondsToFrames(els.videoPlayer.currentTime);
   if (regionInFrames !== null && f <= regionInFrames) {
     setStatusWarn('Mark Out must be after Mark In.'); return;
@@ -3089,11 +3133,80 @@ function updateRegionPanelUI() {
 }
 
 function getActiveStreamerTargetFrames() {
-  if (selectedCueId && currentProject) {
-    const cue = currentProject.cues.find(c => c.cueId === selectedCueId);
-    return getCueStreamerTargetFrames(cue);
-  }
   return normalizeStreamerTargetFrames(regionStreamerTargetFrames);
+}
+
+function selectedCueTimingIsDirty() {
+  if (!selectedCueId || !currentProject) return false;
+  const cue = getCueById(selectedCueId);
+  if (!cue) return false;
+  return cue.inFrames !== regionInFrames
+    || cue.outFrames !== regionOutFrames
+    || !streamerTargetFramesEqual(getCueStreamerTargetFrames(cue), regionStreamerTargetFrames);
+}
+
+async function confirmDiscardCueTimingChanges() {
+  if (!selectedCueTimingIsDirty()) return true;
+  const cue = getCueById(selectedCueId);
+  const label = cue?.cueNumber || 'selected cue';
+  const result = await window.api.dialog.confirm({
+    title: 'Discard Cue Timing Changes',
+    message: `${label} has uncommitted cue timing or streamer changes.\nDiscard them?`,
+  });
+  return !!result?.confirmed;
+}
+
+async function submitCueTimingUpdate() {
+  if (!selectedCueId || !currentProject) return;
+  const cue = getCueById(selectedCueId);
+  if (!cue) return;
+  if (!selectedCueAllowsTimingEdit()) {
+    setStatusWarn('Cue timing is locked after recording.');
+    return;
+  }
+  if (regionInFrames === null || regionOutFrames === null || regionOutFrames <= regionInFrames) {
+    setStatusWarn('Set a valid In and Out before updating the cue.');
+    return;
+  }
+  if (!selectedCueTimingIsDirty()) {
+    setStatusInfo('Cue timing already matches the current region.');
+    return;
+  }
+
+  const result = await window.api.cue.updateCue(selectedCueId, {
+    inFrames: regionInFrames,
+    outFrames: regionOutFrames,
+    streamerTargetFrames: regionStreamerTargetFrames,
+    dialogue: els.cueDetailDialogue?.value ?? cue.dialogue ?? '',
+    notes: els.cueDetailNotes?.value ?? cue.notes ?? '',
+  });
+  if (!result.success) {
+    setStatusError(`Cue update failed: ${result.error}`);
+    return;
+  }
+
+  currentProject = result.project;
+  const updatedCue = currentProject.cues.find(c => c.cueId === selectedCueId);
+  if (!updatedCue) return;
+
+  regionInFrames = updatedCue.inFrames;
+  regionOutFrames = updatedCue.outFrames;
+  regionStreamerTargetFrames = getCueStreamerTargetFrames(updatedCue);
+
+  renderCueList();
+  showCueDetail(updatedCue);
+  updateRegionPanelUI();
+  updateRegionHighlight();
+  updateCreateCueButton();
+  updateDialogueOverlay();
+
+  const chars = currentProject.characters || [];
+  const char = chars.find(c => c.characterId === updatedCue.characterId);
+  boothSend(getCueBoothPayload(updatedCue, char?.name || ''));
+  boothSend({ type: 'cuePrimed', currentTime: framesToSeconds(updatedCue.inFrames) });
+
+  markUnsaved();
+  setStatusOk(`${updatedCue.cueNumber} updated.`);
 }
 
 function clampStreamerTargetFrames(frame) {
@@ -4215,6 +4328,7 @@ function renderTakeListGrouped(cueId) {
     const tracks = Array.isArray(t.tracks) && t.tracks.length > 0
       ? t.tracks
       : [{ laneId: 'mic1', label: 'Mic 1', filePath: t.filePath, durationSecs: t.durationSecs }];
+    const revealFilePath = tracks.find(track => !!track.filePath)?.filePath || t.filePath || '';
     const selectedClass = t.isSelected ? ' selected' : '';
     const auditionClass = t.takeId === activeAuditionTakeId ? ' audition-source' : '';
     const trackRows = tracks.map(track => {
@@ -4222,7 +4336,7 @@ function renderTakeListGrouped(cueId) {
       const laneLabel = track.trackName || track.label || laneId;
       const isAuditioning = t.takeId === activeAuditionTakeId && laneId === activeAuditionLaneId;
       const activeClass = isAuditioning ? ' active' : '';
-      return `<button class="take-lane-row${activeClass}" data-action="toggle-audition-track" data-lane-id="${_escapeHtml(laneId)}" data-take-id="${_escapeHtml(t.takeId)}" title="${_escapeHtml(track.filePath || '')}" aria-pressed="${isAuditioning ? 'true' : 'false'}">
+      return `<button class="take-lane-row${activeClass}" data-action="toggle-audition-track" data-lane-id="${_escapeHtml(laneId)}" data-take-id="${_escapeHtml(t.takeId)}" data-file-path="${_escapeHtml(track.filePath || revealFilePath)}" title="${_escapeHtml(track.filePath || '')}" aria-pressed="${isAuditioning ? 'true' : 'false'}">
         <span class="take-lane-name"><span class="take-lane-dot"></span>${_escapeHtml(laneLabel)}</span>
         <span class="take-lane-badges">
           ${t.isSelected ? '<span class="take-lane-chip export">Export</span>' : ''}
@@ -4231,7 +4345,7 @@ function renderTakeListGrouped(cueId) {
       </button>`;
     }).join('');
 
-    return `<div class="take-group${selectedClass}${auditionClass}" data-take-id="${_escapeHtml(t.takeId)}">
+    return `<div class="take-group${selectedClass}${auditionClass}" data-take-id="${_escapeHtml(t.takeId)}" data-file-path="${_escapeHtml(revealFilePath)}">
       <div class="take-row">
         <span class="take-number">T${t.takeNumber}</span>
         <span class="take-duration">${dur}</span>
@@ -4282,8 +4396,31 @@ function updateCreateCueButton() {
   const hasRegion = regionInFrames !== null
                  && regionOutFrames !== null
                  && regionOutFrames > regionInFrames;
-  const noSelection = !selectedCueId;
-  els.btnCreateCue.disabled = !(hasRegion && noSelection && !!currentProject);
+  if (!currentProject) {
+    els.btnCreateCue.textContent = 'Create Cue';
+    els.btnCreateCue.disabled = true;
+    return;
+  }
+  if (selectedCueId) {
+    if (selectedCueAllowsTimingEdit()) {
+      els.btnCreateCue.textContent = 'Update Cue';
+      els.btnCreateCue.disabled = !(hasRegion && selectedCueTimingIsDirty());
+    } else {
+      els.btnCreateCue.textContent = 'Cue Locked';
+      els.btnCreateCue.disabled = true;
+    }
+    return;
+  }
+  els.btnCreateCue.textContent = 'Create Cue';
+  els.btnCreateCue.disabled = !hasRegion;
+}
+
+function handlePrimaryCueAction() {
+  if (selectedCueId) {
+    submitCueTimingUpdate().catch(err => setStatusError(err.message));
+    return;
+  }
+  showCreateCueModal();
 }
 
 /**
@@ -4393,7 +4530,7 @@ async function submitCreateCue() {
   rebuildCharacterFilter();
 
   // New cue becomes active immediately
-  if (cueResult.cue) selectCue(cueResult.cue.cueId);
+  if (cueResult.cue) await selectCue(cueResult.cue.cueId);
   if (cueResult.cue && pendingCueRecording) {
     const attached = await attachPendingRecordingToCue(cueResult.cue);
     if (attached) {
@@ -4507,7 +4644,7 @@ function renderCueList() {
     // Cue selection: click anywhere on the item EXCEPT the complete toggle
     item.addEventListener('click', (e) => {
       if (e.target.closest('.cue-complete-toggle')) return; // handled separately
-      selectCue(cue.cueId);
+      selectCue(cue.cueId).catch(err => setStatusError(err.message));
     });
 
     // Complete toggle: stop propagation so it doesn't also select the cue,
@@ -4530,6 +4667,7 @@ function resetCueAndTakeWorkspace() {
   goodTakesPlaybackEnabled = false;
   regionInFrames = null;
   regionOutFrames = null;
+  regionStreamerTargetFrames = [];
   els.cueDetail?.classList.add('hidden');
   els.cueList?.querySelectorAll('.cue-item.selected').forEach(el => el.classList.remove('selected'));
   renderTakeList(null);
@@ -4596,7 +4734,15 @@ function renderCueOverlapDetail(cue) {
   els.cueOverlapDetail.classList.remove('hidden');
 }
 
-function selectCue(cueId) {
+async function selectCue(cueId) {
+  if (selectedCueId && selectedCueId !== cueId) {
+    const discardAllowed = await confirmDiscardCueTimingChanges();
+    if (!discardAllowed) {
+      setStatusInfo('Cue timing changes kept.');
+      return;
+    }
+  }
+
   const cue = currentProject?.cues.find(c => c.cueId === cueId);
   if (!cue) return;
 
@@ -4651,7 +4797,12 @@ function selectCue(cueId) {
   boothSend({ type: 'cuePrimed', currentTime: inSec });
 }
 
-function deselectCue() {
+async function deselectCue() {
+  const discardAllowed = await confirmDiscardCueTimingChanges();
+  if (!discardAllowed) {
+    setStatusInfo('Cue timing changes kept.');
+    return;
+  }
   selectedCueId = null;
   els.cueList.querySelectorAll('.cue-item').forEach(el => el.classList.remove('selected'));
   els.cueDetail.classList.add('hidden');
@@ -4802,6 +4953,7 @@ async function deleteCue() {
   currentProject = result.project;
   selectedCueId  = null;
   regionInFrames = regionOutFrames = null;
+  regionStreamerTargetFrames = [];
   isLooping      = false;
   updateRegionPanelUI();
   updateRegionHighlight();
@@ -5235,6 +5387,28 @@ function hideExportModal() {
   els.modalExportPdf.classList.add('hidden');
 }
 
+function showExportCharacterModal() {
+  if (!currentProject) return;
+  const characters = (currentProject.characters || [])
+    .slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  if (!characters.length) {
+    setStatusWarn('No characters are available to export.');
+    return;
+  }
+  els.exportCharacterSelect.innerHTML = '<option value="">— select character —</option>' +
+    characters.map(character =>
+      `<option value="${_escapeHtml(character.characterId)}">${_escapeHtml(character.name || 'Unnamed Character')}</option>`
+    ).join('');
+  els.exportCharacterSelect.value = '';
+  els.modalExportCharacter.classList.remove('hidden');
+  setTimeout(() => els.exportCharacterSelect.focus(), 50);
+}
+
+function hideExportCharacterModal() {
+  els.modalExportCharacter?.classList.add('hidden');
+}
+
 async function submitExportPdf() {
   const preparedBy = els.inputPreparedBy.value.trim();
 
@@ -5299,20 +5473,26 @@ async function submitExportRemoteCueManifest() {
   setStatusOk(`Remote cue manifest exported (${assignedCueCount}/${cueCount} cue${cueCount === 1 ? '' : 's'} assigned): ${result.folderPath}`);
 }
 
-function showExportResultModal(result, exportOffsetMs) {
+function showExportResultModal(result, exportOffsetMs, scope = null) {
   const stems = Array.isArray(result.renderedFiles) ? result.renderedFiles : [];
   const missing = Array.isArray(result.missingFiles) ? result.missingFiles : [];
   const unsupported = Array.isArray(result.unsupportedFiles) ? result.unsupportedFiles : [];
+  const skippedSelected = Array.isArray(result.skippedSelectedRows) ? result.skippedSelectedRows : [];
   const placedCount = stems.reduce((sum, stem) => sum + Number(stem.placedTakeCount || 0), 0);
-  const warningCount = missing.length + unsupported.length;
+  const warningCount = missing.length + unsupported.length + skippedSelected.length;
+  const scopeLabel = scope?.type === 'character'
+    ? `Character export: ${scope.name || 'Character'}`
+    : 'Full project export';
 
   if (!els.modalExportResult) {
     window.api.dialog.showInfo({
       title: 'Full-Length Export Result',
       message: [
+        scopeLabel,
         `Offset: ${exportOffsetMs} ms`,
         `Stems: ${stems.length}`,
         `Placed: ${placedCount}`,
+        `Skipped selected: ${skippedSelected.length}`,
         `Warnings: ${warningCount}`,
         `Package: ${result.packageRoot || '-'}`,
       ].join('\n'),
@@ -5320,7 +5500,9 @@ function showExportResultModal(result, exportOffsetMs) {
     return;
   }
 
-  els.exportResultSubtitle.textContent = warningCount > 0 ? 'Export completed with warnings' : 'Export completed';
+  els.exportResultSubtitle.textContent = warningCount > 0
+    ? `${scopeLabel} — completed with warnings`
+    : `${scopeLabel} — completed`;
   els.exportResultOffset.textContent = `${exportOffsetMs} ms`;
   els.exportResultStems.textContent = String(stems.length);
   els.exportResultPlaced.textContent = String(placedCount);
@@ -5352,6 +5534,10 @@ function hideExportResultModal() {
 }
 
 async function submitExportGoodTakesPackage() {
+  return submitExportGoodTakesPackageForCharacter(null);
+}
+
+async function submitExportGoodTakesPackageForCharacter(characterId = null) {
   if (!currentProject) return;
   if (els.audioEngineRecordingOffsetMs) {
     ws.recordingOffsetMs = getRecordingOffsetMsFromInput();
@@ -5359,9 +5545,15 @@ async function submitExportGoodTakesPackage() {
     updateRecordingOffsetFeedback();
     await saveWorkspaceSettings({ persist: true });
   }
-  setStatusInfo('Exporting full-length good takes...');
+  const character = characterId
+    ? (currentProject.characters || []).find(item => item.characterId === characterId)
+    : null;
+  setStatusInfo(character ? `Exporting full-length good takes for ${character.name || 'character'}...` : 'Exporting full-length good takes...');
   const exportOffsetMs = getRecordingOffsetMs();
-  const result = await window.api.export.goodTakesPackage({ recordingOffsetMs: exportOffsetMs });
+  const result = await window.api.export.goodTakesPackage({
+    recordingOffsetMs: exportOffsetMs,
+    characterId: characterId || null,
+  });
   if (!result.success) {
     if (result.error !== 'Export cancelled.') setStatusError(`Full-length good takes export failed: ${result.error}`);
     else setStatusInfo('Export cancelled.');
@@ -5371,12 +5563,25 @@ async function submitExportGoodTakesPackage() {
   const stemCount = Array.isArray(result.renderedFiles) ? result.renderedFiles.length : Array.isArray(result.copiedFiles) ? result.copiedFiles.length : 0;
   const missingCount = Array.isArray(result.missingFiles) ? result.missingFiles.length : 0;
   const unsupportedCount = Array.isArray(result.unsupportedFiles) ? result.unsupportedFiles.length : 0;
-  showExportResultModal(result, exportOffsetMs);
-  if (missingCount > 0 || unsupportedCount > 0) {
-    setStatusWarn(`Full-length stems exported with ${exportOffsetMs}ms offset, ${missingCount} missing and ${unsupportedCount} unsupported source file(s): ${result.packageRoot}`);
+  const skippedSelectedCount = Array.isArray(result.skippedSelectedRows) ? result.skippedSelectedRows.length : 0;
+  showExportResultModal(result, exportOffsetMs, character ? { type: 'character', name: character.name || '' } : null);
+  if (missingCount > 0 || unsupportedCount > 0 || skippedSelectedCount > 0) {
+    setStatusWarn(`${character ? `${character.name} stems` : 'Full-length stems'} exported with ${exportOffsetMs}ms offset, ${missingCount} missing, ${unsupportedCount} unsupported, and ${skippedSelectedCount} selected row(s) not placed: ${result.packageRoot}`);
     return;
   }
-  setStatusOk(`Full-length good takes exported with ${exportOffsetMs}ms offset (${stemCount} stem${stemCount === 1 ? '' : 's'}): ${result.packageRoot}`);
+  setStatusOk(`${character ? `${character.name} good takes` : 'Full-length good takes'} exported with ${exportOffsetMs}ms offset (${stemCount} stem${stemCount === 1 ? '' : 's'}): ${result.packageRoot}`);
+}
+
+async function submitExportCharacterGoodTakes() {
+  if (!currentProject) return;
+  const characterId = els.exportCharacterSelect?.value || '';
+  if (!characterId) {
+    setStatusWarn('Select a character to export.');
+    els.exportCharacterSelect?.focus();
+    return;
+  }
+  hideExportCharacterModal();
+  await submitExportGoodTakesPackageForCharacter(characterId);
 }
 
 function formatDate(iso) {
@@ -5539,7 +5744,7 @@ els.timelineRuler.addEventListener('mousedown', (e) => {
   _rulerDragStartSec = viewXToSeconds(e.clientX - els.timelineRuler.getBoundingClientRect().left);
 });
 
-document.addEventListener('mousemove', (e) => {
+document.addEventListener('mousemove', async (e) => {
   if (!_rulerDragActive || !peakData) return;
 
   const dx = e.clientX - _rulerDragStartX;
@@ -5552,7 +5757,12 @@ document.addEventListener('mousemove', (e) => {
 
     // Auto-deselect any active cue so we enter clean spotting mode
     if (selectedCueId) {
-      deselectCue();
+      await deselectCue();
+      if (selectedCueId) {
+        _rulerDragActive = false;
+        _rulerDragMoved = false;
+        return;
+      }
     }
   }
 
@@ -5833,7 +6043,7 @@ els.btnMarkOut.addEventListener('click', markOut);
 els.btnLoop.addEventListener('click',    toggleLoop);
 
 // Create Cue button → open modal
-els.btnCreateCue.addEventListener('click', showCreateCueModal);
+els.btnCreateCue.addEventListener('click', handlePrimaryCueAction);
 
 // Waveform generate
 els.btnGenerateWaveform.addEventListener('click', generateWaveform);
@@ -5861,7 +6071,7 @@ els.btnDeleteCue.addEventListener('click', deleteCue);
 els.cueOverlapList?.addEventListener('click', (event) => {
   const row = event.target.closest('.cue-overlap-row');
   if (!row?.dataset.cueId) return;
-  selectCue(row.dataset.cueId);
+  selectCue(row.dataset.cueId).catch(err => setStatusError(err.message));
 });
 els.cueDetailTakes.addEventListener('click', (event) => {
   const target = event.target.closest('[data-action]');
@@ -5896,6 +6106,22 @@ els.cueDetailTakes.addEventListener('click', (event) => {
       resyncPlaybackTargetsForCurrentTimeline({ guide: false }).catch(() => {});
     }
   }
+});
+els.cueDetailTakes.addEventListener('contextmenu', async (event) => {
+  const row = event.target.closest('.take-group, .take-lane-row');
+  if (!row) return;
+  event.preventDefault();
+  const filePath = row.dataset.filePath || row.closest('.take-group')?.dataset.filePath || '';
+  if (!filePath) {
+    setStatusWarn('No recorded file is attached to this take.');
+    return;
+  }
+  const result = await window.api.app.revealInFolder(filePath);
+  if (!result?.success) {
+    setStatusError(result?.error || 'Could not reveal the recorded file.');
+    return;
+  }
+  setStatusInfo('Recorded take revealed in file location.');
 });
 
 // Playback settings toggles
@@ -6092,6 +6318,13 @@ els.btnExportResultClose?.addEventListener('click', hideExportResultModal);
 els.modalExportResult?.addEventListener('click', e => {
   if (e.target === els.modalExportResult) hideExportResultModal();
 });
+els.btnExportCharacterCancel?.addEventListener('click', hideExportCharacterModal);
+els.btnExportCharacterConfirm?.addEventListener('click', () => {
+  submitExportCharacterGoodTakes().catch(err => setStatusError(err.message));
+});
+els.modalExportCharacter?.addEventListener('click', e => {
+  if (e.target === els.modalExportCharacter) hideExportCharacterModal();
+});
 
 els.beepTypeSelect?.addEventListener('change', () => {
   ws.cueBeepType = els.beepTypeSelect.value === 'click' ? 'click' : 'beep';
@@ -6162,7 +6395,7 @@ document.querySelectorAll('.audio-engine-select, .audio-input-select').forEach(s
   });
 });
 
-function handleCancelCommand() {
+async function handleCancelCommand() {
   if (recordArmed) {
     disarmRecord();
     return;
@@ -6192,13 +6425,17 @@ function handleCancelCommand() {
     return;
   }
   if (selectedCueId) {
-    deselectCue();
-    setStatusInfo('Cue deselected. In/Out cleared. Ready to spot.');
+    const hadSelectedCue = !!selectedCueId;
+    await deselectCue();
+    if (hadSelectedCue && !selectedCueId) {
+      setStatusInfo('Cue deselected. In/Out cleared. Ready to spot.');
+    }
     return;
   }
   if (regionInFrames !== null || regionOutFrames !== null) {
     regionInFrames = null;
     regionOutFrames = null;
+    regionStreamerTargetFrames = [];
     isLooping = false;
     cancelPreroll();
     updateRegionPanelUI();
@@ -6226,8 +6463,8 @@ const commandRegistry = [
   { id: 'transport.recordModePunchIn', group: 'Transport', label: 'Recording Mode: Punch-in', defaultShortcut: '', run: () => setRecordMode('punch-in') },
   { id: 'cue.markIn', group: 'Cue', label: 'Mark In', defaultShortcut: 'I', run: () => markIn() },
   { id: 'cue.markOut', group: 'Cue', label: 'Mark Out', defaultShortcut: 'O', run: () => markOut() },
-  { id: 'cue.create', group: 'Cue', label: 'Create Cue', defaultShortcut: 'Enter', run: () => {
-    if (regionInFrames !== null && regionOutFrames !== null && regionOutFrames > regionInFrames && !selectedCueId && currentProject) showCreateCueModal();
+  { id: 'cue.create', group: 'Cue', label: 'Create / Update Cue', defaultShortcut: 'Enter', run: () => {
+    if (regionInFrames !== null && regionOutFrames !== null && regionOutFrames > regionInFrames && currentProject) handlePrimaryCueAction();
   } },
   { id: 'cue.loop', group: 'Cue', label: 'Loop / Loop Record', defaultShortcut: 'L', run: () => toggleLoop() },
   { id: 'cue.preroll', group: 'Cue', label: 'Cue Pre-roll', defaultShortcut: 'P', run: () => togglePrerollEnabled() },
@@ -6263,11 +6500,12 @@ const commandRegistry = [
   { id: 'display.booth', group: 'Display', label: 'Open Booth Display', defaultShortcut: '', run: () => els.btnOpenBooth?.click() },
   { id: 'view.inspector', group: 'View', label: 'Show / Hide Inspector', defaultShortcut: '', run: () => els.btnInspectorToggle?.click() },
   { id: 'export.goodTakes', group: 'Export', label: 'Full-Length Good Takes', defaultShortcut: '', run: () => submitExportGoodTakesPackage().catch(err => setStatusError(err.message)) },
+  { id: 'export.goodTakesCharacter', group: 'Export', label: 'Full-Length Good Takes for Character', defaultShortcut: '', run: () => showExportCharacterModal() },
   { id: 'export.remoteManifest', group: 'Export', label: 'Remote Cue Manifest', defaultShortcut: '', run: () => submitExportRemoteCueManifest().catch(err => setStatusError(err.message)) },
   { id: 'export.sessionReport', group: 'Export', label: 'ADR Session Report', defaultShortcut: '', run: () => submitExportReport().catch(err => setStatusError(err.message)) },
   { id: 'export.csv', group: 'Export', label: 'ADR List CSV', defaultShortcut: '', run: () => submitExportCsv().catch(err => setStatusError(err.message)) },
   { id: 'export.pdf', group: 'Export', label: 'ADR List PDF', defaultShortcut: '', run: () => showExportModal() },
-  { id: 'app.cancelContext', group: 'App', label: 'Cancel / Close / Clear Selection', defaultShortcut: 'Escape', run: () => handleCancelCommand() },
+  { id: 'app.cancelContext', group: 'App', label: 'Cancel / Close / Clear Selection', defaultShortcut: 'Escape', run: () => handleCancelCommand().catch(err => setStatusError(err.message)) },
   { id: 'app.shortcuts', group: 'App', label: 'Keyboard Shortcuts', defaultShortcut: '', run: () => showKeyboardShortcutsModal() },
 ];
 
@@ -6577,50 +6815,14 @@ document.addEventListener('keydown', (e) => {
       togglePlay();
       break;
     case 'Escape':
-      if (recordArmed) {
-        disarmRecord();
-        break;
-      }
-      hideRecordModeMenu();
-      // Priority 1: close any open modal
-      if (!els.modalActors.classList.contains('hidden'))      { hideActorModal();      break; }
-      if (!els.modalCreateCue.classList.contains('hidden'))   { hideCreateCueModal();  break; }
-      if (!els.modalNewProject.classList.contains('hidden'))  { hideNewProjectModal(); break; }
-      if (!els.modalExportPdf.classList.contains('hidden'))   { hideExportModal();     break; }
-      if (els.modalExportResult && !els.modalExportResult.classList.contains('hidden')) { hideExportResultModal(); break; }
-      const projectInfoModal = document.getElementById('modal-project-info');
-      if (projectInfoModal && !projectInfoModal.classList.contains('hidden')) {
-        projectInfoModal.classList.add('hidden');
-        break;
-      }
-      // Priority 2: deselect active cue (also clears region and loop)
-  if (selectedCueId) {
-    deselectCue();
-    setStatusInfo('Cue deselected. In/Out cleared. Ready to spot.');
-    break;
-  }
-      // Priority 3: clear active In/Out range if one exists (neutral spotting state)
-      if (regionInFrames !== null || regionOutFrames !== null) {
-        regionInFrames = null;
-        regionOutFrames = null;
-        regionStreamerTargetFrames = [];
-        isLooping = false;
-        cancelPreroll();
-        updateRegionPanelUI();
-        updateRegionHighlight();
-        updateLoopButton();
-        updateCreateCueButton();
-        setStatusInfo('In/Out cleared.');
-        break;
-      }
-      // Priority 4: neutral state — do nothing, do not move playhead
-      // (stopPlayback would reset currentTime which is unexpected)
+      handleCancelCommand().catch(err => setStatusError(err.message));
       break;
     case 'Enter':
-      // Enter triggers Create Cue modal when valid In/Out and no cue selected
+      // Enter triggers the primary cue action (create or update) when the region is valid
       if (regionInFrames !== null && regionOutFrames !== null
-          && regionOutFrames > regionInFrames && !selectedCueId && currentProject) {
-        e.preventDefault(); showCreateCueModal();
+          && regionOutFrames > regionInFrames && currentProject) {
+        e.preventDefault();
+        handlePrimaryCueAction();
       }
       break;
     case 's': case 'S':
@@ -7111,6 +7313,7 @@ window.api.onMenu.manageActors?.(() => {
   if (currentProject) showActorModal();
 });
 window.api.onMenu.exportGoodTakesPackage?.(() => submitExportGoodTakesPackage());
+window.api.onMenu.exportGoodTakesCharacter?.(() => showExportCharacterModal());
 window.api.onMenu.exportRemoteCueManifest?.(() => submitExportRemoteCueManifest());
 window.api.onMenu.exportReport( () => submitExportReport());
 window.api.onMenu.exportCsv(    () => submitExportCsv());

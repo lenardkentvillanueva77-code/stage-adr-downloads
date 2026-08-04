@@ -155,8 +155,8 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
   });
 
   // ── Update Cue ────────────────────────────────────────────────────────────
-  // patch may contain: { dialogue, notes, characterId, status }
-  // Timing (inFrames/outFrames) is not editable in this phase.
+  // patch may contain: { dialogue, notes, characterId, status, inFrames, outFrames }
+  // Timing edits are allowed only while the cue has no recorded takes.
   ipcMain.handle('cue:updateCue', async (_event, { cueId, patch }) => {
     let project = getProject();
     if (!project) return { success: false, error: 'No project is open.' };
@@ -167,10 +167,28 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
     // Whitelist the fields that can be patched
     // actorId is explicit — not a pass-through unknown field
-    const allowed = ['dialogue', 'notes', 'characterId', 'status', 'actorId', 'streamerStartFrames', 'streamerTargetFrames'];
+    const allowed = ['dialogue', 'notes', 'characterId', 'status', 'actorId', 'inFrames', 'outFrames', 'streamerStartFrames', 'streamerTargetFrames'];
     const safePatch = {};
     for (const key of allowed) {
       if (key in patch) safePatch[key] = patch[key];
+    }
+
+    const hasRecordedTakes = (project.takes || []).some(take => take.cueId === cueId);
+
+    if ('inFrames' in safePatch || 'outFrames' in safePatch) {
+      if (hasRecordedTakes) {
+        return { success: false, error: 'Cue timing is locked once recordings exist.' };
+      }
+      const nextInFrames = 'inFrames' in safePatch ? safePatch.inFrames : exists.inFrames;
+      const nextOutFrames = 'outFrames' in safePatch ? safePatch.outFrames : exists.outFrames;
+      if (typeof nextInFrames !== 'number' || typeof nextOutFrames !== 'number') {
+        return { success: false, error: 'inFrames and outFrames must be numbers.' };
+      }
+      if (nextOutFrames <= nextInFrames) {
+        return { success: false, error: 'outFrames must be greater than inFrames.' };
+      }
+      safePatch.inFrames = Math.max(0, Math.round(nextInFrames));
+      safePatch.outFrames = Math.max(0, Math.round(nextOutFrames));
     }
 
     // Validate characterId if changing
@@ -211,13 +229,23 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
       }
     }
 
-    const effectiveInFrames = exists.inFrames;
-    const effectiveOutFrames = exists.outFrames;
+    const effectiveInFrames = 'inFrames' in safePatch ? safePatch.inFrames : exists.inFrames;
+    const effectiveOutFrames = 'outFrames' in safePatch ? safePatch.outFrames : exists.outFrames;
+    const existingStreamerTargets = Array.isArray(exists.streamerTargetFrames)
+      ? exists.streamerTargetFrames
+      : (typeof exists.streamerStartFrames === 'number' ? [exists.streamerStartFrames] : []);
+
+    if (!('streamerTargetFrames' in safePatch) && !('streamerStartFrames' in safePatch) && 'inFrames' in safePatch) {
+      const deltaFrames = safePatch.inFrames - exists.inFrames;
+      safePatch.streamerTargetFrames = normalizeStreamerTargets(
+        existingStreamerTargets.map(frame => frame + deltaFrames)
+      ).map(frame => Math.max(effectiveInFrames, Math.min(effectiveOutFrames, frame)));
+      safePatch.streamerStartFrames = safePatch.streamerTargetFrames[0] ?? null;
+    }
+
     const effectiveStreamerTargets = 'streamerTargetFrames' in safePatch
       ? safePatch.streamerTargetFrames
-      : Array.isArray(exists.streamerTargetFrames)
-        ? exists.streamerTargetFrames
-        : (typeof exists.streamerStartFrames === 'number' ? [exists.streamerStartFrames] : []);
+      : existingStreamerTargets;
 
     if (effectiveStreamerTargets.some(frame => frame < effectiveInFrames || frame > effectiveOutFrames)) {
       return { success: false, error: 'Streamer target must stay within the cue in/out range.' };

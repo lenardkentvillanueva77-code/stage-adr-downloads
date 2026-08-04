@@ -10,8 +10,9 @@
  * setAllowClose) so the app:confirmClose handler can gate clean-quit cleanup.
  */
 
-const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 const projectHandlers  = require('./src/ipc/projectHandlers');
 const mediaHandlers    = require('./src/ipc/mediaHandlers');
@@ -207,6 +208,18 @@ function toggleBoothFullscreen() {
   boothWindow.setFullScreen(!boothWindow.isFullScreen());
 }
 
+ipcMain.handle('app:revealInFolder', async (_event, filePath) => {
+  const resolvedPath = String(filePath || '').trim();
+  if (!resolvedPath) {
+    return { success: false, error: 'No file path provided.' };
+  }
+  if (!fs.existsSync(resolvedPath)) {
+    return { success: false, error: `Recorded file not found: ${resolvedPath}` };
+  }
+  shell.showItemInFolder(resolvedPath);
+  return { success: true };
+});
+
 // ── Application menu ──────────────────────────────────────────────────────────
 
 function buildOpenRecentSubmenu() {
@@ -268,6 +281,7 @@ function buildMenu() {
       label: 'Export',
       submenu: [
         { label: 'Full-Length Good Takes...', click: () => mainWindow?.webContents.send('menu:export-good-takes-package') },
+        { label: 'Full-Length Good Takes for Character...', click: () => mainWindow?.webContents.send('menu:export-good-takes-character') },
         { type: 'separator' },
         { label: 'Remote Cue Manifest...', click: () => mainWindow?.webContents.send('menu:export-remote-cue-manifest') },
         { type: 'separator' },

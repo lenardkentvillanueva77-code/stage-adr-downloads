@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
      */
     confirmClose: (opts) => ipcRenderer.invoke('app:confirmClose', opts || {}),
     setTitle: (title) => ipcRenderer.invoke('app:setTitle', title),
+    revealInFolder: (filePath) => ipcRenderer.invoke('app:revealInFolder', filePath),
   },
 
   // ── Project ─────────────────────────────────────────────────────────────────
@@ -174,6 +175,7 @@ contextBridge.exposeInMainWorld('api', {
       exportReport:  (cb) => ipcRenderer.on('menu:export-report',   cb),
       exportRemoteCueManifest: (cb) => ipcRenderer.on('menu:export-remote-cue-manifest', cb),
       exportGoodTakesPackage: (cb) => ipcRenderer.on('menu:export-good-takes-package', cb),
+      exportGoodTakesCharacter: (cb) => ipcRenderer.on('menu:export-good-takes-character', cb),
       exportCsv:     (cb) => ipcRenderer.on('menu:export-csv',      cb),
       exportPdf:     (cb) => ipcRenderer.on('menu:export-pdf',      cb),
       returnToStartOnStop: (cb) => ipcRenderer.on('menu:return-to-start-on-stop', (_event, checked) => cb(checked)),

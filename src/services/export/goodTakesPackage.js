@@ -58,6 +58,16 @@ function getTakeTracks(take) {
     : [{ laneId: 'mic1', label: 'Mic 1', trackName: 'Mic 1', filePath: take.filePath, durationSecs: take.durationSecs }];
 }
 
+function getTrackLaneIdentity(track) {
+  const laneId = String(track?.laneId || '').trim();
+  if (laneId) return laneId;
+  const trackName = String(track?.trackName || track?.label || '').trim();
+  if (trackName) return `named:${trackName}`;
+  const filePath = String(track?.filePath || '').trim();
+  if (filePath) return `file:${filePath}`;
+  return 'lane:unknown';
+}
+
 function buildLookup(project) {
   const cues = new Map((project.cues || []).map(cue => [cue.cueId, cue]));
   const characters = new Map((project.characters || []).map(character => [character.characterId, character]));
@@ -244,16 +254,18 @@ function getFilmDurationSeconds(project, placements, frameRate) {
   return Math.max(1, maxSeconds);
 }
 
-function buildPlacements(project) {
+function buildPlacements(project, options = {}) {
   const frameRate = project.settings?.frameRate || project.video?.frameRate || '25';
   const { cues, characters, actors } = buildLookup(project);
   const placements = [];
   const missingFiles = [];
   const unsupportedFiles = [];
+  const characterIdFilter = options.characterId || null;
 
   for (const take of (project.takes || []).filter(item => item.isSelected)) {
     const cue = cues.get(take.cueId);
     if (!cue) continue;
+    if (characterIdFilter && cue.characterId !== characterIdFilter) continue;
     const character = characters.get(cue.characterId) || {};
     const actor = actors.get(take.actorId || cue.actorId) || {};
     const characterName = safeName(character.name || 'Unassigned Character');
@@ -261,6 +273,8 @@ function buildPlacements(project) {
 
     for (const track of getTakeTracks(take)) {
       const sourcePath = track.filePath || take.filePath || '';
+      const laneId = String(track.laneId || '').trim();
+      const laneKey = getTrackLaneIdentity(track);
       const laneName = safeName(track.trackName || track.label || track.laneId || 'Mic');
       const timelineStartSeconds = Math.max(0, cueInSeconds + getTakeStartOffsetSecs(take, track, project));
       const timelineStartFrames = secondsToFrames(timelineStartSeconds, frameRate);
@@ -271,6 +285,8 @@ function buildPlacements(project) {
         track,
         sourcePath,
         characterName,
+        laneId,
+        laneKey,
         laneName,
         timelineStartSeconds,
         timelineStartFrames,
@@ -311,7 +327,7 @@ function buildPlacements(project) {
   return { placements, missingFiles, unsupportedFiles, frameRate };
 }
 
-function buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFiles, placements }) {
+function buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFiles, placements, characterId = null }) {
   const renderedBySource = new Map();
   for (const file of renderedFiles) {
     for (const sourcePath of file.sourcePaths) renderedBySource.set(sourcePath, file);
@@ -320,7 +336,9 @@ function buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFil
   const unsupportedBySource = new Map(unsupportedFiles.map(item => [item.sourcePath, item]));
   const placementBySource = new Map(placements.map(item => [item.sourcePath, item]));
 
-  return buildAdrSessionRows(project).map(row => {
+  return buildAdrSessionRows(project)
+    .filter(row => !characterId || row.characterId === characterId)
+    .map(row => {
     const rendered = renderedBySource.get(row.filePath);
     const missing = missingBySource.get(row.filePath);
     const unsupported = unsupportedBySource.get(row.filePath);
@@ -337,8 +355,8 @@ function buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFil
       cueOutTimecode: placement?.cueOutTimecode ?? row.cueOutTimecode ?? '',
       sourceExists: missing ? 'NO' : rendered ? 'YES' : '',
       exportNote: unsupported?.reason || '',
-    };
-  });
+      };
+    });
 }
 
 function writePackageCsv(csvPath, rows) {
@@ -436,6 +454,7 @@ function writeSummary(summaryPath, manifest) {
     `DELIVERY COUNTS`,
     `Full-length stems:    ${manifest.renderedFiles.length}`,
     `Placed good takes:    ${manifest.placements.length}`,
+    `Skipped selected:     ${manifest.skippedSelectedRows.length}`,
     `Alternate take rows:  ${alternateRows.length}`,
     `Missing sources:      ${manifest.missingFiles.length}`,
     `Unsupported sources:  ${manifest.unsupportedFiles.length}`,
@@ -493,6 +512,17 @@ function writeSummary(summaryPath, manifest) {
     }
   }
 
+  if (manifest.skippedSelectedRows.length) {
+    lines.push(``, `SELECTED ROWS NOT PLACED`);
+    for (const row of manifest.skippedSelectedRows) {
+      lines.push(
+        `- ${row.cueNumber || 'Cue'} / ${row.character || 'No character'} / T${row.takeNumber || ''} / ${row.trackName || row.laneId || 'Mic'}`,
+        `  Status: ${row.exportStatus || 'SKIPPED'}`,
+        `  Source: ${row.filePath || '(no source file)'}`
+      );
+    }
+  }
+
   lines.push(
     ``,
     `TECHNICAL REPORT FILES`,
@@ -508,18 +538,29 @@ function writeSummary(summaryPath, manifest) {
   fs.writeFileSync(summaryPath, Buffer.from(lines.join('\n'), 'utf8'));
 }
 
-function exportGoodTakesPackage({ project, destinationRoot }) {
+function exportGoodTakesPackage({ project, destinationRoot, characterId = null }) {
   if (!project) throw new Error('No project is open.');
   if (!destinationRoot) throw new Error('No export destination was provided.');
 
-  const selectedTakes = (project.takes || []).filter(take => take.isSelected);
+  const cueById = new Map((project.cues || []).map(cue => [cue.cueId, cue]));
+  const selectedTakes = (project.takes || []).filter(take => {
+    if (!take.isSelected) return false;
+    if (!characterId) return true;
+    return cueById.get(take.cueId)?.characterId === characterId;
+  });
   if (!selectedTakes.length) throw new Error('No good takes are selected.');
 
   const projectName = safeName(project.projectName || project.filmTitle, 'ADR_Project');
-  const packageRoot = ensureUniquePath(path.join(destinationRoot, `${projectName}_Full_Length_Good_Takes_${timestampForPath()}`));
+  const character = characterId
+    ? (project.characters || []).find(item => item.characterId === characterId)
+    : null;
+  const exportLabel = character
+    ? `${projectName}_${safeName(character.name, 'Character')}_Full_Length_Good_Takes_${timestampForPath()}`
+    : `${projectName}_Full_Length_Good_Takes_${timestampForPath()}`;
+  const packageRoot = ensureUniquePath(path.join(destinationRoot, exportLabel));
   fs.mkdirSync(packageRoot, { recursive: true });
 
-  const { placements, missingFiles, unsupportedFiles, frameRate } = buildPlacements(project);
+  const { placements, missingFiles, unsupportedFiles, frameRate } = buildPlacements(project, { characterId });
   if (!placements.length) {
     throw new Error('No selected good take WAV files were usable for full-length export.');
   }
@@ -529,8 +570,16 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
   const groups = new Map();
 
   for (const placement of placements) {
-    const key = `${placement.characterName}\n${placement.laneName}`;
-    if (!groups.has(key)) groups.set(key, { characterName: placement.characterName, laneName: placement.laneName, placements: [] });
+    const key = `${placement.characterName}\n${placement.laneKey}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        characterName: placement.characterName,
+        laneId: placement.laneId,
+        laneKey: placement.laneKey,
+        laneName: placement.laneName,
+        placements: [],
+      });
+    }
     groups.get(key).placements.push(placement);
   }
 
@@ -570,6 +619,8 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
 
     renderedFiles.push({
       characterName: group.characterName,
+      laneId: group.laneId,
+      laneKey: group.laneKey,
       laneName: group.laneName,
       destPath,
       fileName,
@@ -580,7 +631,8 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
     });
   }
 
-  const reportRows = buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFiles, placements });
+  const reportRows = buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFiles, placements, characterId });
+  const skippedSelectedRows = reportRows.filter(row => row.goodTake === 'YES' && row.exportStatus !== 'PLACED_IN_FULL_LENGTH_STEM');
   const manifest = {
     reportType: 'adr-full-length-good-takes-export',
     generatedAt: new Date().toISOString(),
@@ -595,6 +647,9 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
       projectName: project.projectName,
       filmTitle: project.filmTitle,
     },
+    exportScope: character
+      ? { type: 'character', characterId, characterName: character.name || '' }
+      : { type: 'project' },
     packageRoot,
     renderedFiles,
     placements: placements.map(placement => ({
@@ -604,6 +659,8 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
       takeNumber: placement.take.takeNumber,
       characterName: placement.characterName,
       actorName: placement.actor.name || '',
+      laneId: placement.laneId,
+      laneKey: placement.laneKey,
       laneName: placement.laneName,
       sourcePath: placement.sourcePath,
       timelineStartSeconds: placement.timelineStartSeconds,
@@ -618,14 +675,18 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
       takeId: item.take.takeId,
       cueId: item.take.cueId,
       characterName: item.characterName,
+      laneId: item.laneId,
       laneName: item.laneName,
       sourcePath: item.sourcePath,
       reason: item.reason,
     })),
     rows: reportRows,
+    skippedSelectedRows,
   };
 
-  const reportBase = `${projectName}_ADR_Full_Length_Good_Takes_Report`;
+  const reportBase = character
+    ? `${projectName}_${safeName(character.name, 'Character')}_ADR_Full_Length_Good_Takes_Report`
+    : `${projectName}_ADR_Full_Length_Good_Takes_Report`;
   const jsonPath = path.join(packageRoot, `${reportBase}.json`);
   const csvPath = path.join(packageRoot, `${reportBase}.csv`);
   const summaryPath = path.join(packageRoot, `${reportBase}.txt`);
@@ -646,6 +707,7 @@ function exportGoodTakesPackage({ project, destinationRoot }) {
     copiedFiles: renderedFiles,
     missingFiles,
     unsupportedFiles: manifest.unsupportedFiles,
+    skippedSelectedRows,
   };
 }
 

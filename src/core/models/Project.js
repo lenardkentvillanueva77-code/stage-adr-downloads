@@ -9,7 +9,7 @@
 const { generateId, nowISO } = require('../utils');
 
 const SCHEMA_VERSION = '1.1.0';   // schema version for actor assignment foundation
-const APP_VERSION    = '1.2.0';   // stamped into project JSON on creation; diagnostic only
+const APP_VERSION    = '1.2.1';   // stamped into project JSON on creation; diagnostic only
 
 /**
  * Create a new in-memory project.
