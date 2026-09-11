@@ -152,6 +152,7 @@ contextBridge.exposeInMainWorld('api', {
     adrSessionReport: () => ipcRenderer.invoke('export:adrSessionReport'),
     remoteCueManifest: () => ipcRenderer.invoke('export:remoteCueManifest'),
     goodTakesPackage: (opts) => ipcRenderer.invoke('export:goodTakesPackage', opts),
+    timelineTakesPackage: (opts) => ipcRenderer.invoke('export:timelineTakesPackage', opts),
   },
 
   // ── Dialogs ─────────────────────────────────────────────────────────────────
@@ -175,6 +176,7 @@ contextBridge.exposeInMainWorld('api', {
       exportReport:  (cb) => ipcRenderer.on('menu:export-report',   cb),
       exportRemoteCueManifest: (cb) => ipcRenderer.on('menu:export-remote-cue-manifest', cb),
       exportGoodTakesPackage: (cb) => ipcRenderer.on('menu:export-good-takes-package', cb),
+      exportTimelineTakesPackage: (cb) => ipcRenderer.on('menu:export-timeline-takes-package', cb),
       exportGoodTakesCharacter: (cb) => ipcRenderer.on('menu:export-good-takes-character', cb),
       exportCsv:     (cb) => ipcRenderer.on('menu:export-csv',      cb),
       exportPdf:     (cb) => ipcRenderer.on('menu:export-pdf',      cb),

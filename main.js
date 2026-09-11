@@ -280,6 +280,8 @@ function buildMenu() {
     {
       label: 'Export',
       submenu: [
+        { label: 'Timeline Takes by Character...', click: () => mainWindow?.webContents.send('menu:export-timeline-takes-package') },
+        { type: 'separator' },
         { label: 'Full-Length Good Takes...', click: () => mainWindow?.webContents.send('menu:export-good-takes-package') },
         { label: 'Full-Length Good Takes for Character...', click: () => mainWindow?.webContents.send('menu:export-good-takes-character') },
         { type: 'separator' },

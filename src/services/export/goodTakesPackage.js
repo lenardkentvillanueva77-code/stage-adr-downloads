@@ -261,8 +261,9 @@ function buildPlacements(project, options = {}) {
   const missingFiles = [];
   const unsupportedFiles = [];
   const characterIdFilter = options.characterId || null;
+  const selectedOnly = options.selectedOnly !== false;
 
-  for (const take of (project.takes || []).filter(item => item.isSelected)) {
+  for (const take of (project.takes || []).filter(item => !selectedOnly || item.isSelected)) {
     const cue = cues.get(take.cueId);
     if (!cue) continue;
     if (characterIdFilter && cue.characterId !== characterIdFilter) continue;
@@ -317,6 +318,7 @@ function buildPlacements(project, options = {}) {
           ...base,
           sourceInfo,
           durationSecs: Math.floor(sourceInfo.dataSize / sourceFrameBytes) / sourceInfo.sampleRate,
+          timelineEndSeconds: timelineStartSeconds + (Math.floor(sourceInfo.dataSize / sourceFrameBytes) / sourceInfo.sampleRate),
         });
       } catch (err) {
         unsupportedFiles.push({ ...base, reason: err.message });
@@ -430,6 +432,8 @@ function writePackageCsv(csvPath, rows) {
 }
 
 function writeSummary(summaryPath, manifest) {
+  const skippedSelectedRows = Array.isArray(manifest.skippedSelectedRows) ? manifest.skippedSelectedRows : [];
+  const isTimelineTakesExport = manifest.reportType === 'adr-timeline-takes-export';
   const alternateRows = manifest.rows
     .filter(row => row.goodTake !== 'YES')
     .sort((a, b) => String(a.cueNumber).localeCompare(String(b.cueNumber)) || Number(a.takeNumber || 0) - Number(b.takeNumber || 0));
@@ -453,17 +457,17 @@ function writeSummary(summaryPath, manifest) {
     ``,
     `DELIVERY COUNTS`,
     `Full-length stems:    ${manifest.renderedFiles.length}`,
-    `Placed good takes:    ${manifest.placements.length}`,
-    `Skipped selected:     ${manifest.skippedSelectedRows.length}`,
-    `Alternate take rows:  ${alternateRows.length}`,
+    `${isTimelineTakesExport ? 'Placed takes' : 'Placed good takes'}:    ${manifest.placements.length}`,
+    `Skipped selected:     ${skippedSelectedRows.length}`,
+    `${isTimelineTakesExport ? 'Non-good take rows' : 'Alternate take rows'}:  ${alternateRows.length}`,
     `Missing sources:      ${manifest.missingFiles.length}`,
     `Unsupported sources:  ${manifest.unsupportedFiles.length}`,
     ``,
-    `STEMS AND PLACED GOOD TAKES`,
+    isTimelineTakesExport ? `STEMS AND PLACED TAKES` : `STEMS AND PLACED GOOD TAKES`,
   ];
 
   if (manifest.renderedFiles.length) {
-    for (const file of manifest.renderedFiles.sort((a, b) =>
+    for (const file of manifest.renderedFiles.slice().sort((a, b) =>
       a.characterName.localeCompare(b.characterName) || a.laneName.localeCompare(b.laneName))) {
       lines.push(
         ``,
@@ -485,7 +489,7 @@ function writeSummary(summaryPath, manifest) {
     lines.push(`- None`);
   }
 
-  lines.push(``, `ALTERNATE TAKES`);
+  lines.push(``, isTimelineTakesExport ? `NON-GOOD TAKE ROWS` : `ALTERNATE TAKES`);
   if (alternateRows.length) {
     for (const row of alternateRows) {
       lines.push(
@@ -512,9 +516,9 @@ function writeSummary(summaryPath, manifest) {
     }
   }
 
-  if (manifest.skippedSelectedRows.length) {
+  if (skippedSelectedRows.length) {
     lines.push(``, `SELECTED ROWS NOT PLACED`);
-    for (const row of manifest.skippedSelectedRows) {
+    for (const row of skippedSelectedRows) {
       lines.push(
         `- ${row.cueNumber || 'Cue'} / ${row.character || 'No character'} / T${row.takeNumber || ''} / ${row.trackName || row.laneId || 'Mic'}`,
         `  Status: ${row.exportStatus || 'SKIPPED'}`,
@@ -531,7 +535,9 @@ function writeSummary(summaryPath, manifest) {
     ``,
     `NOTES`,
     `- Import each full-length WAV at film/session zero in the DAW.`,
-    `- Good takes are rendered into stems; alternates remain available via the source paths above and the CSV/JSON report.`,
+    isTimelineTakesExport
+      ? `- All usable takes are rendered into take-number stems; overlap stems prevent clips from colliding on the same track.`
+      : `- Good takes are rendered into stems; alternates remain available via the source paths above and the CSV/JSON report.`,
     `- Talkback is never included in exported stems.`
   );
 
@@ -711,6 +717,237 @@ function exportGoodTakesPackage({ project, destinationRoot, characterId = null }
   };
 }
 
+function padTakeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? String(number).padStart(2, '0') : 'Unknown';
+}
+
+function makeTimelineTakeStemName(takeNumber, overlapIndex = 0) {
+  const takeLabel = `Take ${padTakeNumber(takeNumber)}`;
+  if (overlapIndex <= 0) return takeLabel;
+  return `Overlap ${takeLabel} ${String(overlapIndex).padStart(2, '0')}`;
+}
+
+function assignPlacementsToNonOverlappingStems(placements) {
+  const stems = [];
+  const sorted = placements.slice().sort((a, b) =>
+    a.timelineStartSeconds - b.timelineStartSeconds ||
+    (a.timelineEndSeconds || 0) - (b.timelineEndSeconds || 0)
+  );
+
+  for (const placement of sorted) {
+    let assigned = false;
+    for (const stem of stems) {
+      if (placement.timelineStartSeconds >= stem.lastEndSeconds) {
+        stem.placements.push(placement);
+        stem.lastEndSeconds = Math.max(stem.lastEndSeconds, placement.timelineEndSeconds || placement.timelineStartSeconds);
+        assigned = true;
+        break;
+      }
+    }
+    if (!assigned) {
+      stems.push({
+        overlapIndex: stems.length,
+        lastEndSeconds: placement.timelineEndSeconds || placement.timelineStartSeconds,
+        placements: [placement],
+      });
+    }
+  }
+
+  return stems;
+}
+
+function exportTimelineTakesPackage({ project, destinationRoot, characterId = null }) {
+  if (!project) throw new Error('No project is open.');
+  if (!destinationRoot) throw new Error('No export destination was provided.');
+
+  const cueById = new Map((project.cues || []).map(cue => [cue.cueId, cue]));
+  const exportableTakes = (project.takes || []).filter(take => {
+    if (!characterId) return true;
+    return cueById.get(take.cueId)?.characterId === characterId;
+  });
+  if (!exportableTakes.length) throw new Error('No takes are available to export.');
+
+  const projectName = safeName(project.projectName || project.filmTitle, 'ADR_Project');
+  const character = characterId
+    ? (project.characters || []).find(item => item.characterId === characterId)
+    : null;
+  const exportLabel = character
+    ? `${projectName}_${safeName(character.name, 'Character')}_Timeline_Takes_${timestampForPath()}`
+    : `${projectName}_Timeline_Takes_${timestampForPath()}`;
+  const packageRoot = ensureUniquePath(path.join(destinationRoot, exportLabel));
+  fs.mkdirSync(packageRoot, { recursive: true });
+
+  const { placements, missingFiles, unsupportedFiles, frameRate } = buildPlacements(project, {
+    characterId,
+    selectedOnly: false,
+  });
+  if (!placements.length) {
+    throw new Error('No take WAV files were usable for timeline export.');
+  }
+
+  const filmDurationSeconds = getFilmDurationSeconds(project, placements, frameRate);
+  const totalSamples = Math.ceil(filmDurationSeconds * DEFAULT_SAMPLE_RATE);
+  const groups = new Map();
+
+  for (const placement of placements) {
+    const takeNumber = Number(placement.take.takeNumber) || 0;
+    const key = `${placement.characterName}\n${placement.laneKey}\n${takeNumber}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        characterName: placement.characterName,
+        laneId: placement.laneId,
+        laneKey: placement.laneKey,
+        laneName: placement.laneName,
+        takeNumber,
+        placements: [],
+      });
+    }
+    groups.get(key).placements.push(placement);
+  }
+
+  const renderedFiles = [];
+  for (const group of Array.from(groups.values()).sort((a, b) =>
+    a.characterName.localeCompare(b.characterName) ||
+    a.takeNumber - b.takeNumber ||
+    a.laneName.localeCompare(b.laneName)
+  )) {
+    const characterFolder = path.join(packageRoot, group.characterName);
+    fs.mkdirSync(characterFolder, { recursive: true });
+    const stems = assignPlacementsToNonOverlappingStems(group.placements);
+
+    for (const stem of stems) {
+      const stemName = makeTimelineTakeStemName(group.takeNumber, stem.overlapIndex);
+      const needsLaneSuffix = group.laneKey !== 'lane:unknown' && groups.size > 1;
+      const laneSuffix = needsLaneSuffix ? `_${safeName(group.laneName)}` : '';
+      const fileName = `${safeName(group.characterName)}_${safeName(stemName)}${laneSuffix}_FULL_LENGTH.wav`;
+      const destPath = ensureUniquePath(path.join(characterFolder, fileName));
+      createSilentWav(destPath, totalSamples, DEFAULT_SAMPLE_RATE);
+
+      const placedSources = [];
+      for (const placement of stem.placements) {
+        const startSample = Math.round(placement.timelineStartSeconds * DEFAULT_SAMPLE_RATE);
+        const writtenSamples = mixPcmIntoStem({
+          stemPath: destPath,
+          sourcePath: placement.sourcePath,
+          sourceInfo: placement.sourceInfo,
+          startSample,
+          totalSamples,
+        });
+        placedSources.push({
+          takeId: placement.take.takeId,
+          cueId: placement.take.cueId,
+          cueNumber: placement.cue.cueNumber || placement.take.cueNumber || '',
+          takeNumber: placement.take.takeNumber,
+          actorName: placement.actor.name || '',
+          sourcePath: placement.sourcePath,
+          timelineStartSeconds: placement.timelineStartSeconds,
+          timelineStartTimecode: placement.timelineStartTimecode,
+          cueInTimecode: placement.cueInTimecode,
+          cueOutTimecode: placement.cueOutTimecode,
+          startSample,
+          writtenSamples,
+        });
+      }
+
+      renderedFiles.push({
+        characterName: group.characterName,
+        laneId: group.laneId,
+        laneKey: group.laneKey,
+        laneName: stemName,
+        sourceLaneName: group.laneName,
+        takeNumber: group.takeNumber,
+        overlapIndex: stem.overlapIndex,
+        destPath,
+        fileName,
+        characterFolder,
+        placedTakeCount: placedSources.length,
+        sourcePaths: placedSources.map(source => source.sourcePath),
+        placedSources,
+      });
+    }
+  }
+
+  const manifest = {
+    reportType: 'adr-timeline-takes-export',
+    generatedAt: new Date().toISOString(),
+    recordingOffsetMs: Number(project.settings?.workspace?.recordingOffsetMs) || 0,
+    sampleRate: DEFAULT_SAMPLE_RATE,
+    bitDepth: OUTPUT_BIT_DEPTH,
+    channels: OUTPUT_CHANNELS,
+    frameRate,
+    filmDurationSeconds,
+    project: {
+      projectId: project.projectId,
+      projectName: project.projectName,
+      filmTitle: project.filmTitle,
+    },
+    exportScope: character
+      ? { type: 'character', characterId, characterName: character.name || '' }
+      : { type: 'project' },
+    packageRoot,
+    renderedFiles,
+    placements: placements.map(placement => ({
+      takeId: placement.take.takeId,
+      cueId: placement.take.cueId,
+      cueNumber: placement.cue.cueNumber || placement.take.cueNumber || '',
+      takeNumber: placement.take.takeNumber,
+      characterName: placement.characterName,
+      actorName: placement.actor.name || '',
+      laneId: placement.laneId,
+      laneKey: placement.laneKey,
+      laneName: placement.laneName,
+      sourcePath: placement.sourcePath,
+      timelineStartSeconds: placement.timelineStartSeconds,
+      timelineStartFrames: placement.timelineStartFrames,
+      timelineStartTimecode: placement.timelineStartTimecode,
+      cueInTimecode: placement.cueInTimecode,
+      cueOutTimecode: placement.cueOutTimecode,
+      durationSecs: placement.durationSecs,
+    })),
+    missingFiles,
+    unsupportedFiles: unsupportedFiles.map(item => ({
+      takeId: item.take.takeId,
+      cueId: item.take.cueId,
+      characterName: item.characterName,
+      laneId: item.laneId,
+      laneName: item.laneName,
+      sourcePath: item.sourcePath,
+      reason: item.reason,
+    })),
+  };
+
+  const reportBase = character
+    ? `${projectName}_${safeName(character.name, 'Character')}_ADR_Timeline_Takes_Report`
+    : `${projectName}_ADR_Timeline_Takes_Report`;
+  const jsonPath = path.join(packageRoot, `${reportBase}.json`);
+  const csvPath = path.join(packageRoot, `${reportBase}.csv`);
+  const summaryPath = path.join(packageRoot, `${reportBase}.txt`);
+  manifest.csvPath = csvPath;
+  manifest.jsonPath = jsonPath;
+  manifest.summaryPath = summaryPath;
+
+  const reportRows = buildPackageRows({ project, renderedFiles, missingFiles, unsupportedFiles, placements, characterId });
+  manifest.rows = reportRows;
+
+  fs.writeFileSync(jsonPath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
+  writePackageCsv(csvPath, reportRows);
+  writeSummary(summaryPath, manifest);
+
+  return {
+    packageRoot,
+    csvPath,
+    jsonPath,
+    summaryPath,
+    renderedFiles,
+    copiedFiles: renderedFiles,
+    missingFiles,
+    unsupportedFiles: manifest.unsupportedFiles,
+    skippedSelectedRows: [],
+  };
+}
+
 module.exports = {
   exportGoodTakesPackage,
+  exportTimelineTakesPackage,
 };

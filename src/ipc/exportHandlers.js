@@ -26,7 +26,10 @@ const {
   generateRemoteCueManifestCsv,
   generateRemoteCueManifestJson,
 } = require('../services/export/remoteCueManifest');
-const { exportGoodTakesPackage } = require('../services/export/goodTakesPackage');
+const {
+  exportGoodTakesPackage,
+  exportTimelineTakesPackage,
+} = require('../services/export/goodTakesPackage');
 const { getProject }          = require('./projectHandlers');
 
 function safeName(value, fallback) {
@@ -239,6 +242,58 @@ function register(ipcMain, getWindow) {
     } catch (err) {
       console.error('[exportHandlers] Good takes package failed:', err);
       return { success: false, error: `Good takes package failed: ${err.message}` };
+    }
+  });
+
+  ipcMain.handle('export:timelineTakesPackage', async (_event, opts = {}) => {
+    const project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+    const exportRecordingOffsetMs = Number(opts.recordingOffsetMs);
+    const characterId = typeof opts.characterId === 'string' && opts.characterId.trim()
+      ? opts.characterId.trim()
+      : null;
+    const projectForExport = Number.isFinite(exportRecordingOffsetMs)
+      ? {
+          ...project,
+          settings: {
+            ...(project.settings || {}),
+            workspace: {
+              ...(project.settings?.workspace || {}),
+              recordingOffsetMs: exportRecordingOffsetMs,
+            },
+          },
+        }
+      : project;
+
+    const cueById = new Map((projectForExport.cues || []).map(cue => [cue.cueId, cue]));
+    const takeCount = (projectForExport.takes || []).filter(take => {
+      if (!characterId) return true;
+      return cueById.get(take.cueId)?.characterId === characterId;
+    }).length;
+    if (!takeCount) {
+      return { success: false, error: characterId ? 'No takes are available for that character.' : 'No takes are available.' };
+    }
+
+    const win = getWindow();
+    const saveResult = await dialog.showOpenDialog(win, {
+      title: 'Export Timeline Takes Folder',
+      defaultPath: getExportsPath(project) || undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (saveResult.canceled || !saveResult.filePaths?.[0]) {
+      return { success: false, error: 'Export cancelled.' };
+    }
+
+    try {
+      const result = exportTimelineTakesPackage({
+        project: projectForExport,
+        destinationRoot: saveResult.filePaths[0],
+        characterId,
+      });
+      return { success: true, ...result };
+    } catch (err) {
+      console.error('[exportHandlers] Timeline takes package failed:', err);
+      return { success: false, error: `Timeline takes package failed: ${err.message}` };
     }
   });
 }

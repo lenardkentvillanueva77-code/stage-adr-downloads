@@ -5482,6 +5482,8 @@ function showExportResultModal(result, exportOffsetMs, scope = null) {
   const warningCount = missing.length + unsupported.length + skippedSelected.length;
   const scopeLabel = scope?.type === 'character'
     ? `Character export: ${scope.name || 'Character'}`
+    : scope?.type === 'timeline'
+      ? 'Timeline takes export'
     : 'Full project export';
 
   if (!els.modalExportResult) {
@@ -5535,6 +5537,37 @@ function hideExportResultModal() {
 
 async function submitExportGoodTakesPackage() {
   return submitExportGoodTakesPackageForCharacter(null);
+}
+
+async function submitExportTimelineTakesPackage() {
+  if (!currentProject) return;
+  if (els.audioEngineRecordingOffsetMs) {
+    ws.recordingOffsetMs = getRecordingOffsetMsFromInput();
+    els.audioEngineRecordingOffsetMs.value = ws.recordingOffsetMs;
+    updateRecordingOffsetFeedback();
+    await saveWorkspaceSettings({ persist: true });
+  }
+
+  const exportOffsetMs = getRecordingOffsetMs();
+  setStatusInfo('Exporting timeline takes by character...');
+  const result = await window.api.export.timelineTakesPackage({
+    recordingOffsetMs: exportOffsetMs,
+  });
+  if (!result.success) {
+    if (result.error !== 'Export cancelled.') setStatusError(`Timeline takes export failed: ${result.error}`);
+    else setStatusInfo('Export cancelled.');
+    return;
+  }
+
+  const stemCount = Array.isArray(result.renderedFiles) ? result.renderedFiles.length : 0;
+  const missingCount = Array.isArray(result.missingFiles) ? result.missingFiles.length : 0;
+  const unsupportedCount = Array.isArray(result.unsupportedFiles) ? result.unsupportedFiles.length : 0;
+  showExportResultModal(result, exportOffsetMs, { type: 'timeline', name: 'Timeline takes' });
+  if (missingCount > 0 || unsupportedCount > 0) {
+    setStatusWarn(`Timeline takes exported with ${exportOffsetMs}ms offset, ${missingCount} missing and ${unsupportedCount} unsupported: ${result.packageRoot}`);
+    return;
+  }
+  setStatusOk(`Timeline takes exported with ${exportOffsetMs}ms offset (${stemCount} stem${stemCount === 1 ? '' : 's'}): ${result.packageRoot}`);
 }
 
 async function submitExportGoodTakesPackageForCharacter(characterId = null) {
@@ -7313,6 +7346,7 @@ window.api.onMenu.manageActors?.(() => {
   if (currentProject) showActorModal();
 });
 window.api.onMenu.exportGoodTakesPackage?.(() => submitExportGoodTakesPackage());
+window.api.onMenu.exportTimelineTakesPackage?.(() => submitExportTimelineTakesPackage());
 window.api.onMenu.exportGoodTakesCharacter?.(() => showExportCharacterModal());
 window.api.onMenu.exportRemoteCueManifest?.(() => submitExportRemoteCueManifest());
 window.api.onMenu.exportReport( () => submitExportReport());
