@@ -262,6 +262,21 @@ function addTake(project, take) {
 }
 
 /**
+ * Replace editable metadata on one take while preserving project immutability.
+ * Callers are responsible for whitelisting the patch at the IPC boundary.
+ */
+function updateTake(project, takeId, patch) {
+  if (!project.takes.some((take) => take.takeId === takeId)) {
+    return { project, error: `Take ${takeId} not found.` };
+  }
+  const next = deepClone(project);
+  next.takes = next.takes.map((take) => take.takeId === takeId
+    ? { ...take, ...patch, updatedAt: nowISO() }
+    : take);
+  return { project: touchProject(next) };
+}
+
+/**
  * Select a take for a cue. Enforces the invariant:
  * exactly one take per cue may have isSelected: true.
  * Also prevents selecting a rejected take.
@@ -400,6 +415,7 @@ module.exports = {
   removeCue,
   // Takes
   addTake,
+  updateTake,
   selectTake,
   deselectAllTakes,
   rateTake,

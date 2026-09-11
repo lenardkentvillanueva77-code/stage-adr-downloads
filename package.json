@@ -1,12 +1,13 @@
 {
   "name": "stage-post-adr-cue-recorder",
-  "version": "1.2.1",
+  "version": "1.3.0-alpha.0",
   "productName": "Post ADR Pro",
   "description": "Post ADR Pro — ADR spotting, cue management, and export",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --inspect",
+    "test": "node --test test/*.test.js",
     "dist:win": "electron-builder --win",
     "dist:win:dir": "electron-builder --win --dir"
   },
@@ -29,7 +30,7 @@
   "build": {
     "appId": "com.stagepost.postadrpro",
     "productName": "Post ADR Pro",
-    "artifactName": "Post ADR Pro Beta 1.2.1 ${version}-${arch}.${ext}",
+    "artifactName": "Post ADR Pro Editor Alpha ${version}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -60,15 +61,15 @@
       "signAndEditExecutable": false
     },
     "nsis": {
-      "artifactName": "Post ADR Pro Beta 1.2.1 Setup ${version}.${ext}",
+      "artifactName": "Post ADR Pro Editor Alpha Setup ${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Post ADR Pro Beta"
+      "shortcutName": "Post ADR Pro Editor Alpha"
     },
     "portable": {
-      "artifactName": "Post ADR Pro Beta 1.2.1 Portable ${version}.${ext}"
+      "artifactName": "Post ADR Pro Editor Alpha Portable ${version}.${ext}"
     }
   }
 }

@@ -24,6 +24,10 @@
 
 const { createCharacter } = require('../core/models/Character');
 const { createCue }       = require('../core/models/Cue');
+const { createTake }      = require('../core/models/Take');
+const path                = require('path');
+const { nowISO }          = require('../core/utils');
+const { renderCompTake }  = require('../services/audio/compTakeRenderer');
 const {
   addCharacter,
   addCue,
@@ -68,6 +72,32 @@ function normalizeStreamerTargets(value) {
       .filter(frame => typeof frame === 'number' && Number.isFinite(frame))
       .map(frame => Math.max(0, Math.round(frame)))
   )].sort((a, b) => a - b);
+}
+
+function finiteWithin(value, min, max, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function normalizeSyncEdit(value, take) {
+  const source = value && typeof value === 'object' ? value : {};
+  const duration = Math.max(0, Number(take.durationSecs) || 0);
+  const trimStartSecs = finiteWithin(source.trimStartSecs, 0, duration, 0);
+  const trimEndSecs = finiteWithin(source.trimEndSecs, 0, Math.max(0, duration - trimStartSecs), 0);
+  const laneOffsets = {};
+  if (source.laneOffsets && typeof source.laneOffsets === 'object') {
+    for (const [laneId, offset] of Object.entries(source.laneOffsets)) {
+      if (!laneId) continue;
+      laneOffsets[String(laneId)] = finiteWithin(offset, -30, 30, 0);
+    }
+  }
+  return {
+    offsetSecs: finiteWithin(source.offsetSecs, -30, 30, 0),
+    trimStartSecs,
+    trimEndSecs,
+    laneOffsets,
+    updatedAt: nowISO(),
+  };
 }
 
 function register(ipcMain, _getWindow, projectHandlerExports) {
@@ -307,6 +337,69 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
     projectHandlerExports._setProject(result.project);
     return { success: true, project: result.project };
+  });
+
+  ipcMain.handle('cue:updateTakeEdit', async (_event, { takeId, syncEdit }) => {
+    let project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+    const take = (project.takes || []).find(item => item.takeId === takeId);
+    if (!take) return { success: false, error: `Take ${takeId} not found.` };
+
+    const { updateTake } = require('../core/projectState');
+    const result = updateTake(project, takeId, { syncEdit: normalizeSyncEdit(syncEdit, take) });
+    if (result.error) return { success: false, error: result.error };
+    projectHandlerExports._setProject(result.project);
+    return { success: true, project: result.project };
+  });
+
+  ipcMain.handle('cue:createCompTake', async (_event, { cueId, segments, sourceTakeIds }) => {
+    let project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+    const cue = (project.cues || []).find(item => item.cueId === cueId);
+    if (!cue) return { success: false, error: `Cue ${cueId} not found.` };
+
+    const existing = (project.takes || []).filter(take => take.cueId === cueId);
+    const nextTakeNumber = existing.reduce((max, take) => Math.max(max, take.takeNumber || 0), 0) + 1;
+    const projectFilePath = getProjectFilePath();
+    const projectMediaPath = project.settings?.projectFolders?.mediaPath
+      || (projectFilePath ? path.join(path.dirname(projectFilePath), 'Media') : null);
+
+    try {
+      const rendered = renderCompTake({ project, cue, segments, takeNumber: nextTakeNumber, projectMediaPath });
+      const sourceIds = [...new Set([
+        ...(Array.isArray(sourceTakeIds) ? sourceTakeIds : []),
+        ...rendered.segments.map(segment => segment.sourceTakeId),
+      ].filter(Boolean))];
+      const firstSource = existing.find(take => sourceIds.includes(take.takeId));
+      const take = {
+        ...createTake({
+          projectId: project.projectId,
+          cueId,
+          takeNumber: nextTakeNumber,
+          filePath: rendered.filePath,
+          durationSecs: rendered.durationSecs,
+          startOffsetSecs: 0,
+          actorId: firstSource?.actorId || cue.actorId || null,
+          notes: 'Created in Comp Mode',
+        }),
+        sourceType: 'created',
+        createdFromTakeIds: sourceIds,
+        tracks: rendered.tracks,
+        compEdit: {
+          segments: rendered.segments,
+          sourceTakeIds: sourceIds,
+          createdAt: nowISO(),
+        },
+      };
+
+      const { addTake } = require('../core/projectState');
+      project = addTake(project, take);
+      projectHandlerExports._setProject(project);
+      const createdTake = project.takes.find(item => item.takeId === take.takeId);
+      return { success: true, project, take: createdTake };
+    } catch (err) {
+      return { success: false, error: err.message || 'Could not create the comp take.' };
+    }
   });
 }
 

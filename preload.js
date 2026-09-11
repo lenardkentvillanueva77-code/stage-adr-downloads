@@ -97,6 +97,8 @@ contextBridge.exposeInMainWorld('api', {
      */
     addTake:   (opts)              => ipcRenderer.invoke('cue:addTake', opts),
     selectTake: (opts)             => ipcRenderer.invoke('cue:selectTake', opts),
+    updateTakeEdit: (opts)         => ipcRenderer.invoke('cue:updateTakeEdit', opts),
+    createCompTake: (opts)         => ipcRenderer.invoke('cue:createCompTake', opts),
   },
 
   // ── Actors ──────────────────────────────────────────────────────────────────

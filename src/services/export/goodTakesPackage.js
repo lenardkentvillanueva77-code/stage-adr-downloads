@@ -176,7 +176,15 @@ function writeOutputSample(buffer, offset, value) {
   buffer.writeIntLE(clipped, offset, 3);
 }
 
-function mixPcmIntoStem({ stemPath, sourcePath, sourceInfo, startSample, totalSamples }) {
+function mixPcmIntoStem({
+  stemPath,
+  sourcePath,
+  sourceInfo,
+  startSample,
+  totalSamples,
+  sourceStartSample = 0,
+  sourceSampleCount = null,
+}) {
   if (sourceInfo.sampleRate !== DEFAULT_SAMPLE_RATE) {
     throw new Error(`Source sample rate ${sourceInfo.sampleRate} does not match export sample rate ${DEFAULT_SAMPLE_RATE}.`);
   }
@@ -184,7 +192,11 @@ function mixPcmIntoStem({ stemPath, sourcePath, sourceInfo, startSample, totalSa
   const sourceBytesPerSample = sourceInfo.bitsPerSample / 8;
   const sourceFrameBytes = sourceBytesPerSample * sourceInfo.channels;
   const sourceSamples = Math.floor(sourceInfo.dataSize / sourceFrameBytes);
-  const writableSamples = Math.max(0, Math.min(sourceSamples, totalSamples - startSample));
+  const availableSourceSamples = Math.max(0, sourceSamples - sourceStartSample);
+  const requestedSourceSamples = Number.isFinite(sourceSampleCount)
+    ? Math.max(0, sourceSampleCount)
+    : availableSourceSamples;
+  const writableSamples = Math.max(0, Math.min(availableSourceSamples, requestedSourceSamples, totalSamples - startSample));
   if (writableSamples <= 0) return 0;
 
   const sourceFd = fs.openSync(sourcePath, 'r');
@@ -199,7 +211,7 @@ function mixPcmIntoStem({ stemPath, sourcePath, sourceInfo, startSample, totalSa
       const samplesThisChunk = Math.min(chunkSamples, writableSamples - samplesWritten);
       const sourceBytes = samplesThisChunk * sourceFrameBytes;
       const destBytes = samplesThisChunk * OUTPUT_BYTES_PER_SAMPLE;
-      const sourcePosition = sourceInfo.dataOffset + samplesWritten * sourceFrameBytes;
+      const sourcePosition = sourceInfo.dataOffset + (sourceStartSample + samplesWritten) * sourceFrameBytes;
       const destPosition = 44 + (startSample + samplesWritten) * OUTPUT_BYTES_PER_SAMPLE;
 
       fs.readSync(sourceFd, sourceBuffer, 0, sourceBytes, sourcePosition);
@@ -225,17 +237,31 @@ function mixPcmIntoStem({ stemPath, sourcePath, sourceInfo, startSample, totalSa
 }
 
 function getTakeStartOffsetSecs(take, track, project) {
-  const projectOffset = Number(project.settings?.workspace?.recordingOffsetMs);
-  if (Number.isFinite(projectOffset)) return projectOffset / 1000;
+  let baseOffset = 0;
+  if (take.sourceType === 'created') {
+    baseOffset = 0;
+  } else {
+    const projectOffset = Number(project.settings?.workspace?.recordingOffsetMs);
+    if (Number.isFinite(projectOffset)) baseOffset = projectOffset / 1000;
 
-  const trackOffset = Number(track.recordingOffsetMs);
-  if (Number.isFinite(trackOffset)) return trackOffset / 1000;
+    const trackOffset = Number(track.recordingOffsetMs);
+    const takeOffset = Number(take.recordingOffsetMs);
+    if (!Number.isFinite(projectOffset) && Number.isFinite(trackOffset)) {
+      baseOffset = trackOffset / 1000;
+    } else if (!Number.isFinite(projectOffset) && !Number.isFinite(trackOffset) && Number.isFinite(takeOffset)) {
+      baseOffset = takeOffset / 1000;
+    } else if (!Number.isFinite(projectOffset)
+      && !Number.isFinite(trackOffset)
+      && !Number.isFinite(takeOffset)
+      && typeof take.startOffsetSecs === 'number'
+      && Number.isFinite(take.startOffsetSecs)) {
+      baseOffset = take.startOffsetSecs;
+    }
+  }
 
-  const takeOffset = Number(take.recordingOffsetMs);
-  if (Number.isFinite(takeOffset)) return takeOffset / 1000;
-
-  if (typeof take.startOffsetSecs === 'number' && Number.isFinite(take.startOffsetSecs)) return take.startOffsetSecs;
-  return 0;
+  const takeSyncOffset = Number(take.syncEdit?.offsetSecs) || 0;
+  const laneSyncOffset = Number(take.syncEdit?.laneOffsets?.[track.laneId]) || 0;
+  return baseOffset + takeSyncOffset + laneSyncOffset;
 }
 
 function getFilmDurationSeconds(project, placements, frameRate) {
@@ -314,11 +340,22 @@ function buildPlacements(project, options = {}) {
           continue;
         }
         const sourceFrameBytes = (sourceInfo.bitsPerSample / 8) * sourceInfo.channels;
+        const sourceDurationSecs = Math.floor(sourceInfo.dataSize / sourceFrameBytes) / sourceInfo.sampleRate;
+        const trimStartSecs = Math.min(sourceDurationSecs, Math.max(0, Number(take.syncEdit?.trimStartSecs) || 0));
+        const trimEndSecs = Math.min(
+          Math.max(0, sourceDurationSecs - trimStartSecs),
+          Math.max(0, Number(take.syncEdit?.trimEndSecs) || 0)
+        );
+        const durationSecs = Math.max(0, sourceDurationSecs - trimStartSecs - trimEndSecs);
         placements.push({
           ...base,
           sourceInfo,
-          durationSecs: Math.floor(sourceInfo.dataSize / sourceFrameBytes) / sourceInfo.sampleRate,
-          timelineEndSeconds: timelineStartSeconds + (Math.floor(sourceInfo.dataSize / sourceFrameBytes) / sourceInfo.sampleRate),
+          sourceStartSample: Math.round(trimStartSecs * sourceInfo.sampleRate),
+          sourceSampleCount: Math.round(durationSecs * sourceInfo.sampleRate),
+          trimStartSecs,
+          trimEndSecs,
+          durationSecs,
+          timelineEndSeconds: timelineStartSeconds + durationSecs,
         });
       } catch (err) {
         unsupportedFiles.push({ ...base, reason: err.message });
@@ -606,6 +643,8 @@ function exportGoodTakesPackage({ project, destinationRoot, characterId = null }
         sourceInfo: placement.sourceInfo,
         startSample,
         totalSamples,
+        sourceStartSample: placement.sourceStartSample,
+        sourceSampleCount: placement.sourceSampleCount,
       });
       placedSources.push({
         takeId: placement.take.takeId,
@@ -833,6 +872,8 @@ function exportTimelineTakesPackage({ project, destinationRoot, characterId = nu
           sourceInfo: placement.sourceInfo,
           startSample,
           totalSamples,
+          sourceStartSample: placement.sourceStartSample,
+          sourceSampleCount: placement.sourceSampleCount,
         });
         placedSources.push({
           takeId: placement.take.takeId,

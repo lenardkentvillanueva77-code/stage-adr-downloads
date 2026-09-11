@@ -60,6 +60,13 @@ function createTake({
     isSelected:      false,   // Good Take — enforced by projectState.selectTake()
     rating:          'none',  // 'none' | 'circle' | 'reject'
     syncStatus:      'local', // future cloud sync field
+    sourceType:      'recorded',
+    syncEdit: {
+      offsetSecs: 0,
+      trimStartSecs: 0,
+      trimEndSecs: 0,
+      laneOffsets: {},
+    },
     notes:           (notes || '').trim(),
     tracks:          [],      // reserved for future multi-mic
   };

@@ -209,6 +209,8 @@ let autoScrollPauseTimer = null;
 let selectedCueId = null;
 let activeAuditionTakeId = null;
 let activeAuditionLaneId = null;
+let syncEditorState = null;
+let syncEditorDrag = null;
 let reviewAudio = null;
 let reviewAudioTakeId = null;
 let reviewAudioLaneId = null;
@@ -570,6 +572,30 @@ const els = {
   cueDetailNotes:         document.getElementById('cue-detail-notes'),
   cueDetailActor:         document.getElementById('cue-detail-actor'),
   cueDetailTakes:         document.getElementById('cue-detail-takes'),
+  modalSyncEditor:        document.getElementById('modal-sync-editor'),
+  syncEditorTitle:        document.getElementById('sync-editor-title'),
+  syncEditorSubtitle:     document.getElementById('sync-editor-subtitle'),
+  btnSyncMode:            document.getElementById('btn-sync-mode'),
+  btnCompMode:            document.getElementById('btn-comp-mode'),
+  btnSyncEditorClose:     document.getElementById('btn-sync-editor-close'),
+  syncEditorSyncToolbar:  document.getElementById('sync-editor-sync-toolbar'),
+  syncEditorCompToolbar:  document.getElementById('sync-editor-comp-toolbar'),
+  syncEditorOffset:       document.getElementById('sync-editor-offset'),
+  syncEditorTrimIn:       document.getElementById('sync-editor-trim-in'),
+  syncEditorTrimOut:      document.getElementById('sync-editor-trim-out'),
+  syncEditorSourcePicker: document.getElementById('sync-editor-source-picker'),
+  syncEditorRuler:        document.getElementById('sync-editor-ruler'),
+  syncEditorMainLane:     document.getElementById('sync-editor-main-lane'),
+  syncEditorSourceTracks: document.getElementById('sync-editor-source-tracks'),
+  syncEditorMainState:    document.getElementById('sync-editor-main-state'),
+  btnSyncEditorMainSolo:  document.getElementById('btn-editor-main-solo'),
+  btnSyncEditorUndo:      document.getElementById('btn-comp-undo'),
+  btnSyncEditorClear:     document.getElementById('btn-comp-clear'),
+  btnSyncEditorDelete:    document.getElementById('btn-comp-delete'),
+  syncEditorStatus:       document.getElementById('sync-editor-status'),
+  btnSyncEditorReveal:    document.getElementById('btn-sync-editor-reveal'),
+  btnSyncEditorCloseFooter: document.getElementById('btn-sync-editor-cancel'),
+  btnSyncEditorSave:      document.getElementById('btn-sync-editor-save'),
   btnSaveCue:             document.getElementById('btn-save-cue'),
 
   // Transport
@@ -2670,12 +2696,14 @@ function getGoodTakeContextCandidates(timelineSeconds) {
     if (!track?.filePath) continue;
 
     const cueInSeconds = framesToSeconds(cue.inFrames);
-    const takeStart = cueInSeconds + getRecordingStartOffsetSecs();
+    const syncEdit = normalizeEditorSyncEdit(take);
+    const editWindow = getTakeEditWindow(take, track, syncEdit);
+    const takeStart = cueInSeconds + getTakeTimelineOffsetSecs(take, track, syncEdit);
     if (timelineSeconds < takeStart) continue;
 
-    const offset = Math.max(0, timelineSeconds - takeStart);
-    const duration = Number(track.durationSecs || take.durationSecs || 0);
-    if (duration > 0 && offset > duration + 0.1) continue;
+    const relativeOffset = Math.max(0, timelineSeconds - takeStart);
+    if (editWindow.durationSecs > 0 && relativeOffset > editWindow.durationSecs + 0.1) continue;
+    const offset = editWindow.trimStartSecs + relativeOffset;
 
     candidates.push({ take, cue, track, offset });
   }
@@ -2893,6 +2921,10 @@ async function startNativeTakePlayback({ playbackId, filePath, offset, target = 
 
 async function syncReviewPlayback(timelineSeconds) {
   if (!isPlaying || !currentProject) return;
+  if (syncEditorState && !els.modalSyncEditor?.classList.contains('hidden')) {
+    await syncEditorReviewPlayback(timelineSeconds);
+    return;
+  }
   if (!activeAuditionTakeId || !activeAuditionLaneId || !isTakesTrackAudible()) {
     stopReviewPlayback();
     return;
@@ -2913,11 +2945,15 @@ async function syncReviewPlayback(timelineSeconds) {
   if (!track?.filePath) { stopReviewPlayback(); return; }
 
   const cueInSeconds = framesToSeconds(cue.inFrames);
-  const takeStart = cueInSeconds + getRecordingStartOffsetSecs();
+  const syncEdit = normalizeEditorSyncEdit(take);
+  const editWindow = getTakeEditWindow(take, track, syncEdit);
+  const takeStart = cueInSeconds + getTakeTimelineOffsetSecs(take, track, syncEdit);
   if (timelineSeconds < takeStart) { stopReviewPlayback(); return; }
-  const offset = Math.max(0, timelineSeconds - takeStart);
+  const relativeOffset = Math.max(0, timelineSeconds - takeStart);
+  if (relativeOffset > editWindow.durationSecs) { stopReviewPlayback(); return; }
+  const offset = editWindow.trimStartSecs + relativeOffset;
   const laneId = track.laneId || activeAuditionLaneId;
-  const playbackId = `audition:${take.takeId}:${laneId}:offset:${getRecordingOffsetMs()}`;
+  const playbackId = `audition:${take.takeId}:${laneId}:offset:${getRecordingOffsetMs()}:${getTakeTimelineOffsetSecs(take, track, syncEdit).toFixed(4)}:${editWindow.trimStartSecs.toFixed(4)}`;
   if (nativeDeviceOpen) {
     const sameNativeReview = nativeReviewPlaybackId === playbackId
       && reviewAudioTakeId === take.takeId
@@ -4348,8 +4384,10 @@ function renderTakeListGrouped(cueId) {
     return `<div class="take-group${selectedClass}${auditionClass}" data-take-id="${_escapeHtml(t.takeId)}" data-file-path="${_escapeHtml(revealFilePath)}">
       <div class="take-row">
         <span class="take-number">T${t.takeNumber}</span>
+        ${t.sourceType === 'created' ? '<span class="take-created-chip">Created</span>' : ''}
         <span class="take-duration">${dur}</span>
         ${actor ? `<span class="take-actor">${_escapeHtml(actor)}</span>` : '<span class="take-actor"></span>'}
+        <button class="btn btn-xs btn-ghost" data-action="open-take-editor" data-take-id="${_escapeHtml(t.takeId)}">Edit</button>
         <button class="btn btn-xs btn-ghost take-good-btn${t.isSelected ? ' active' : ''}" data-action="toggle-good-take" data-take-id="${_escapeHtml(t.takeId)}" aria-pressed="${t.isSelected ? 'true' : 'false'}">${t.isSelected ? 'Good Take' : 'Mark Good'}</button>
       </div>
       <div class="take-lane-list">${trackRows}</div>
@@ -4383,6 +4421,529 @@ function toggleAuditionTrack(takeId, laneId) {
   if (wasActive) stopReviewPlayback();
   if (selectedCueId) renderTakeList(selectedCueId);
   setStatusInfo(wasActive ? 'Take audition off.' : `Audition armed: ${laneId}`);
+}
+
+function getEditorTakeTracks(take) {
+  return Array.isArray(take?.tracks) && take.tracks.length
+    ? take.tracks
+    : [{ laneId: 'mic1', label: 'Mic 1', trackName: 'Mic 1', filePath: take?.filePath, durationSecs: take?.durationSecs }];
+}
+
+function normalizeEditorSyncEdit(take, value = take?.syncEdit) {
+  const source = value && typeof value === 'object' ? value : {};
+  const duration = Math.max(0, Number(take?.durationSecs) || 0);
+  const trimStartSecs = Math.min(duration, Math.max(0, Number(source.trimStartSecs) || 0));
+  const trimEndSecs = Math.min(
+    Math.max(0, duration - trimStartSecs),
+    Math.max(0, Number(source.trimEndSecs) || 0)
+  );
+  const laneOffsets = {};
+  for (const [laneId, offset] of Object.entries(source.laneOffsets || {})) {
+    const number = Number(offset);
+    if (Number.isFinite(number)) laneOffsets[laneId] = Math.min(30, Math.max(-30, number));
+  }
+  return {
+    offsetSecs: Math.min(30, Math.max(-30, Number(source.offsetSecs) || 0)),
+    trimStartSecs,
+    trimEndSecs,
+    laneOffsets,
+  };
+}
+
+function getEditorSyncForTake(take) {
+  if (syncEditorState?.takeId === take?.takeId) return syncEditorState.syncEdit;
+  return normalizeEditorSyncEdit(take);
+}
+
+function getTakeTimelineOffsetSecs(take, track, syncEdit = normalizeEditorSyncEdit(take)) {
+  const baseOffset = take?.sourceType === 'created' ? 0 : getRecordingStartOffsetSecs();
+  return baseOffset
+    + (Number(syncEdit?.offsetSecs) || 0)
+    + (Number(syncEdit?.laneOffsets?.[track?.laneId]) || 0);
+}
+
+function getTakeEditWindow(take, track, syncEdit = normalizeEditorSyncEdit(take)) {
+  const sourceDuration = Math.max(0, Number(track?.durationSecs ?? take?.durationSecs) || 0);
+  const trimStartSecs = Math.min(sourceDuration, Math.max(0, Number(syncEdit?.trimStartSecs) || 0));
+  const trimEndSecs = Math.min(
+    Math.max(0, sourceDuration - trimStartSecs),
+    Math.max(0, Number(syncEdit?.trimEndSecs) || 0)
+  );
+  return {
+    trimStartSecs,
+    trimEndSecs,
+    durationSecs: Math.max(0, sourceDuration - trimStartSecs - trimEndSecs),
+  };
+}
+
+function editorCueAndTake() {
+  if (!syncEditorState || !currentProject) return { cue: null, take: null };
+  return {
+    cue: currentProject.cues?.find(item => item.cueId === syncEditorState.cueId) || null,
+    take: currentProject.takes?.find(item => item.takeId === syncEditorState.takeId) || null,
+  };
+}
+
+function setSyncEditorStatus(message, type = '') {
+  if (!els.syncEditorStatus) return;
+  els.syncEditorStatus.textContent = message;
+  els.syncEditorStatus.classList.remove('ok', 'error');
+  if (type) els.syncEditorStatus.classList.add(type);
+}
+
+function syncEditorSegmentId() {
+  return globalThis.crypto?.randomUUID?.() || `segment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getSyncEditorTimelineDuration() {
+  const { cue, take } = editorCueAndTake();
+  if (!cue || !take) return 1;
+  const cueDuration = Math.max(0.1, framesToSeconds(cue.outFrames - cue.inFrames));
+  const sourceIds = syncEditorState.mode === 'comp'
+    ? Array.from(syncEditorState.selectedTakeIds)
+    : [take.takeId];
+  let duration = cueDuration;
+  for (const takeId of sourceIds) {
+    const sourceTake = currentProject.takes?.find(item => item.takeId === takeId);
+    if (!sourceTake) continue;
+    const track = getEditorTakeTracks(sourceTake)[0];
+    const syncEdit = getEditorSyncForTake(sourceTake);
+    const window = getTakeEditWindow(sourceTake, track, syncEdit);
+    duration = Math.max(duration, getTakeTimelineOffsetSecs(sourceTake, track, syncEdit) + window.durationSecs);
+  }
+  for (const segment of syncEditorState.segments) {
+    duration = Math.max(duration, segment.timelineStartSecs + segment.durationSecs);
+  }
+  return Math.max(0.1, duration);
+}
+
+function editorRegionGeometry(startSecs, durationSecs, timelineDuration) {
+  const visibleStart = Math.max(0, startSecs);
+  const visibleEnd = Math.min(timelineDuration, startSecs + durationSecs);
+  if (visibleEnd <= visibleStart) return 'display:none';
+  return `left:${(visibleStart / timelineDuration) * 100}%;width:${((visibleEnd - visibleStart) / timelineDuration) * 100}%`;
+}
+
+function renderSyncEditorRuler(timelineDuration) {
+  const marks = 10;
+  els.syncEditorRuler.innerHTML = Array.from({ length: marks + 1 }, (_, index) => {
+    const seconds = (timelineDuration * index) / marks;
+    return `<i class="sync-editor-ruler-mark" style="left:${(index / marks) * 100}%"><span>${seconds.toFixed(seconds < 10 ? 2 : 1)}s</span></i>`;
+  }).join('');
+}
+
+function renderSyncEditorMainLane(timelineDuration, take) {
+  const activeMain = syncEditorState.activeAudition?.type === 'main';
+  els.btnSyncEditorMainSolo.classList.toggle('active', activeMain);
+  els.btnSyncEditorMainSolo.setAttribute('aria-pressed', activeMain ? 'true' : 'false');
+
+  if (syncEditorState.mode === 'sync') {
+    const track = getEditorTakeTracks(take)[0];
+    const window = getTakeEditWindow(take, track, syncEditorState.syncEdit);
+    const start = getTakeTimelineOffsetSecs(take, track, syncEditorState.syncEdit);
+    els.syncEditorMainState.textContent = `T${take.takeNumber} / ${track.trackName || track.label || track.laneId}`;
+    els.syncEditorMainLane.innerHTML = `<div class="sync-editor-region" style="${editorRegionGeometry(start, window.durationSecs, timelineDuration)}"><span>T${take.takeNumber} edited take</span></div>`;
+    return;
+  }
+
+  els.syncEditorMainState.textContent = syncEditorState.segments.length
+    ? `${syncEditorState.segments.length} region${syncEditorState.segments.length === 1 ? '' : 's'}`
+    : 'Empty comp';
+  if (!syncEditorState.segments.length) {
+    els.syncEditorMainLane.innerHTML = '<div class="sync-editor-lane-empty">Select a range on a source lane</div>';
+    return;
+  }
+  els.syncEditorMainLane.innerHTML = syncEditorState.segments.map(segment => {
+    const sourceTake = currentProject.takes.find(item => item.takeId === segment.sourceTakeId);
+    const selected = syncEditorState.selectedSegmentId === segment.segmentId ? ' selected' : '';
+    return `<button class="sync-editor-region${selected}" data-editor-action="select-segment" data-segment-id="${_escapeHtml(segment.segmentId)}" style="${editorRegionGeometry(segment.timelineStartSecs, segment.durationSecs, timelineDuration)}"><span>T${sourceTake?.takeNumber || '?'} / ${segment.durationSecs.toFixed(2)}s</span></button>`;
+  }).join('');
+}
+
+function renderSyncEditorSourcePicker(cueId) {
+  const takes = (currentProject.takes || [])
+    .filter(take => take.cueId === cueId)
+    .sort((left, right) => left.takeNumber - right.takeNumber);
+  els.syncEditorSourcePicker.innerHTML = takes.map(take => {
+    const checked = syncEditorState.selectedTakeIds.has(take.takeId) ? ' checked' : '';
+    const created = take.sourceType === 'created' ? ' / Created' : '';
+    return `<label class="sync-editor-source-option"><input type="checkbox" data-editor-action="toggle-comp-source" data-take-id="${_escapeHtml(take.takeId)}"${checked} />T${take.takeNumber}${created}</label>`;
+  }).join('');
+}
+
+function sourceLaneMarkup({ take, track, timelineDuration, compMode }) {
+  const syncEdit = getEditorSyncForTake(take);
+  const window = getTakeEditWindow(take, track, syncEdit);
+  const start = getTakeTimelineOffsetSecs(take, track, syncEdit);
+  const laneId = track.laneId || 'mic1';
+  const active = syncEditorState.activeAudition?.type === 'source'
+    && syncEditorState.activeAudition.takeId === take.takeId
+    && syncEditorState.activeAudition.laneId === laneId;
+  const created = take.sourceType === 'created' ? ' / Created' : '';
+  const laneName = compMode ? `T${take.takeNumber}${created}` : (track.trackName || track.label || laneId);
+  const detail = compMode ? (track.trackName || track.label || laneId) : `T${take.takeNumber}`;
+  const offsetInput = compMode ? '' : `<label class="sync-editor-lane-offset">Mic offset <input type="number" data-editor-action="lane-offset" data-lane-id="${_escapeHtml(laneId)}" min="-30" max="30" step="0.001" value="${Number(syncEdit.laneOffsets?.[laneId]) || 0}" /> s</label>`;
+  return `<div class="sync-editor-track-label">
+    <button class="sync-editor-solo${active ? ' active' : ''}" data-editor-action="audition-source" data-take-id="${_escapeHtml(take.takeId)}" data-lane-id="${_escapeHtml(laneId)}" aria-pressed="${active ? 'true' : 'false'}" title="Audition ${_escapeHtml(laneName)}">S</button>
+    <span>${_escapeHtml(laneName)}</span><small>${_escapeHtml(detail)}</small>
+  </div>
+  <div class="sync-editor-lane sync-editor-source-lane${active ? ' active' : ''}" ${compMode ? `data-comp-source-lane="true" data-take-id="${_escapeHtml(take.takeId)}" data-lane-id="${_escapeHtml(laneId)}"` : ''}>
+    <div class="sync-editor-region sync-editor-source-region" style="${editorRegionGeometry(start, window.durationSecs, timelineDuration)}"><span>${_escapeHtml(track.trackName || track.label || laneId)}</span></div>
+    ${offsetInput}
+  </div>`;
+}
+
+function renderSyncEditorSourceLanes(timelineDuration, cueId, take) {
+  if (syncEditorState.mode === 'sync') {
+    els.syncEditorSourceTracks.innerHTML = getEditorTakeTracks(take)
+      .map(track => sourceLaneMarkup({ take, track, timelineDuration, compMode: false }))
+      .join('');
+    return;
+  }
+
+  const selectedTakes = (currentProject.takes || [])
+    .filter(item => item.cueId === cueId && syncEditorState.selectedTakeIds.has(item.takeId))
+    .sort((left, right) => left.takeNumber - right.takeNumber);
+  els.syncEditorSourceTracks.innerHTML = selectedTakes.length
+    ? selectedTakes.map(sourceTake => sourceLaneMarkup({
+        take: sourceTake,
+        track: getEditorTakeTracks(sourceTake)[0],
+        timelineDuration,
+        compMode: true,
+      })).join('')
+    : '<div class="sync-editor-track-label"><span>No sources</span><small>Choose takes above</small></div><div class="sync-editor-lane"><div class="sync-editor-lane-empty">No source takes selected</div></div>';
+}
+
+function renderSyncEditor() {
+  const { cue, take } = editorCueAndTake();
+  if (!cue || !take || !syncEditorState) {
+    hideSyncEditor();
+    return;
+  }
+  const compMode = syncEditorState.mode === 'comp';
+  els.syncEditorTitle.textContent = `T${take.takeNumber} Editor`;
+  els.syncEditorSubtitle.textContent = `${cue.cueNumber} / ${take.sourceType === 'created' ? 'Created take' : 'Recorded take'}`;
+  els.btnSyncMode.classList.toggle('active', !compMode);
+  els.btnCompMode.classList.toggle('active', compMode);
+  els.btnSyncMode.setAttribute('aria-selected', compMode ? 'false' : 'true');
+  els.btnCompMode.setAttribute('aria-selected', compMode ? 'true' : 'false');
+  els.syncEditorSyncToolbar.classList.toggle('hidden', compMode);
+  els.syncEditorCompToolbar.classList.toggle('hidden', !compMode);
+  els.syncEditorOffset.value = Number(syncEditorState.syncEdit.offsetSecs) || 0;
+  els.syncEditorTrimIn.value = Number(syncEditorState.syncEdit.trimStartSecs) || 0;
+  els.syncEditorTrimOut.value = Number(syncEditorState.syncEdit.trimEndSecs) || 0;
+  els.syncEditorTrimIn.max = Math.max(0, Number(take.durationSecs) || 0);
+  els.syncEditorTrimOut.max = Math.max(0, (Number(take.durationSecs) || 0) - syncEditorState.syncEdit.trimStartSecs);
+  els.btnSyncEditorSave.textContent = compMode ? 'Create Take' : 'Save Sync';
+  els.btnSyncEditorSave.disabled = compMode && !syncEditorState.segments.length;
+  els.btnSyncEditorUndo.disabled = !syncEditorState.undoStack.length;
+  els.btnSyncEditorClear.disabled = !syncEditorState.segments.length;
+  els.btnSyncEditorDelete.disabled = !syncEditorState.selectedSegmentId;
+  if (compMode) renderSyncEditorSourcePicker(cue.cueId);
+
+  const timelineDuration = getSyncEditorTimelineDuration();
+  syncEditorState.timelineDuration = timelineDuration;
+  renderSyncEditorRuler(timelineDuration);
+  renderSyncEditorMainLane(timelineDuration, take);
+  renderSyncEditorSourceLanes(timelineDuration, cue.cueId, take);
+}
+
+function showSyncEditor(takeId, mode = 'sync') {
+  const take = currentProject?.takes?.find(item => item.takeId === takeId);
+  const cue = take && currentProject?.cues?.find(item => item.cueId === take.cueId);
+  if (!take || !cue) {
+    setStatusWarn('Select a recorded take before opening the editor.');
+    return;
+  }
+  stopReviewPlayback();
+  const tracks = getEditorTakeTracks(take);
+  const sourceTakeIds = take.sourceType === 'created' && take.compEdit?.sourceTakeIds?.length
+    ? take.compEdit.sourceTakeIds
+    : [take.takeId];
+  const segments = take.sourceType === 'created' && Array.isArray(take.compEdit?.segments)
+    ? take.compEdit.segments.map(segment => ({ ...segment, segmentId: segment.segmentId || syncEditorSegmentId() }))
+    : [];
+  syncEditorState = {
+    cueId: cue.cueId,
+    takeId: take.takeId,
+    mode: mode === 'comp' ? 'comp' : 'sync',
+    syncEdit: normalizeEditorSyncEdit(take),
+    selectedTakeIds: new Set(sourceTakeIds.filter(id => currentProject.takes.some(item => item.takeId === id))),
+    segments,
+    undoStack: [],
+    selectedSegmentId: null,
+    activeAudition: { type: 'source', takeId: take.takeId, laneId: tracks[0]?.laneId || 'mic1' },
+    dirty: false,
+    busy: false,
+  };
+  if (!syncEditorState.selectedTakeIds.size) syncEditorState.selectedTakeIds.add(take.takeId);
+  els.modalSyncEditor.classList.remove('hidden');
+  setSyncEditorStatus('Ready');
+  renderSyncEditor();
+}
+
+function hideSyncEditor() {
+  if (!syncEditorState) return;
+  stopReviewPlayback();
+  syncEditorDrag = null;
+  syncEditorState = null;
+  els.modalSyncEditor?.classList.add('hidden');
+}
+
+function setSyncEditorMode(mode) {
+  if (!syncEditorState || syncEditorState.busy) return;
+  syncEditorState.mode = mode === 'comp' ? 'comp' : 'sync';
+  syncEditorState.selectedSegmentId = null;
+  const { take } = editorCueAndTake();
+  const firstTrack = getEditorTakeTracks(take)[0];
+  syncEditorState.activeAudition = syncEditorState.mode === 'sync'
+    ? { type: 'source', takeId: take.takeId, laneId: firstTrack?.laneId || 'mic1' }
+    : { type: 'main' };
+  stopReviewPlayback();
+  setSyncEditorStatus(syncEditorState.mode === 'comp' ? 'Drag across a source lane to promote that range.' : 'Adjust the take and mic offsets, then save.');
+  renderSyncEditor();
+}
+
+function pushSyncEditorUndo() {
+  syncEditorState.undoStack.push(syncEditorState.segments.map(segment => ({ ...segment })));
+  if (syncEditorState.undoStack.length > 50) syncEditorState.undoStack.shift();
+}
+
+function promoteCompRange(takeId, timelineStartSecs, timelineEndSecs) {
+  const take = currentProject.takes.find(item => item.takeId === takeId);
+  if (!take) return;
+  const track = getEditorTakeTracks(take)[0];
+  const syncEdit = getEditorSyncForTake(take);
+  const window = getTakeEditWindow(take, track, syncEdit);
+  const takeStart = getTakeTimelineOffsetSecs(take, track, syncEdit);
+  const start = Math.max(takeStart, Math.min(timelineStartSecs, timelineEndSecs));
+  const end = Math.min(takeStart + window.durationSecs, Math.max(timelineStartSecs, timelineEndSecs));
+  if (end - start < 0.01) {
+    setSyncEditorStatus('Select at least 10 ms of source audio.', 'error');
+    renderSyncEditor();
+    return;
+  }
+
+  pushSyncEditorUndo();
+  const next = [];
+  for (const segment of syncEditorState.segments) {
+    const segmentStart = segment.timelineStartSecs;
+    const segmentEnd = segmentStart + segment.durationSecs;
+    if (segmentEnd <= start || segmentStart >= end) {
+      next.push(segment);
+      continue;
+    }
+    if (segmentStart < start) {
+      next.push({ ...segment, segmentId: syncEditorSegmentId(), durationSecs: start - segmentStart });
+    }
+    if (segmentEnd > end) {
+      next.push({
+        ...segment,
+        segmentId: syncEditorSegmentId(),
+        sourceStartSecs: segment.sourceStartSecs + (end - segmentStart),
+        timelineStartSecs: end,
+        durationSecs: segmentEnd - end,
+      });
+    }
+  }
+
+  const durationSecs = end - start;
+  const fadeSecs = Math.min(0.01, durationSecs / 2);
+  const segment = {
+    segmentId: syncEditorSegmentId(),
+    sourceTakeId: take.takeId,
+    sourceLaneId: track.laneId || 'mic1',
+    sourceStartSecs: window.trimStartSecs + (start - takeStart),
+    timelineStartSecs: start,
+    durationSecs,
+    fadeInSecs: fadeSecs,
+    fadeOutSecs: fadeSecs,
+  };
+  next.push(segment);
+  syncEditorState.segments = next.sort((left, right) => left.timelineStartSecs - right.timelineStartSecs);
+  syncEditorState.selectedSegmentId = segment.segmentId;
+  syncEditorState.dirty = true;
+  setSyncEditorStatus(`Promoted ${durationSecs.toFixed(3)}s from T${take.takeNumber}.`);
+  renderSyncEditor();
+}
+
+function updateCompDragSelection(event) {
+  if (!syncEditorDrag) return;
+  const x = Math.min(syncEditorDrag.rect.width, Math.max(0, event.clientX - syncEditorDrag.rect.left));
+  syncEditorDrag.currentSecs = (x / syncEditorDrag.rect.width) * syncEditorDrag.timelineDuration;
+  const start = Math.min(syncEditorDrag.startSecs, syncEditorDrag.currentSecs);
+  const end = Math.max(syncEditorDrag.startSecs, syncEditorDrag.currentSecs);
+  syncEditorDrag.overlay.style.left = `${(start / syncEditorDrag.timelineDuration) * 100}%`;
+  syncEditorDrag.overlay.style.width = `${((end - start) / syncEditorDrag.timelineDuration) * 100}%`;
+}
+
+function beginCompDrag(event, lane) {
+  if (!syncEditorState || syncEditorState.mode !== 'comp' || event.button !== 0) return;
+  const rect = lane.getBoundingClientRect();
+  const timelineDuration = syncEditorState.timelineDuration || 1;
+  const x = Math.min(rect.width, Math.max(0, event.clientX - rect.left));
+  const overlay = document.createElement('div');
+  overlay.className = 'sync-editor-drag-selection';
+  lane.appendChild(overlay);
+  syncEditorDrag = {
+    takeId: lane.dataset.takeId,
+    rect,
+    timelineDuration,
+    startSecs: (x / rect.width) * timelineDuration,
+    currentSecs: (x / rect.width) * timelineDuration,
+    overlay,
+  };
+  updateCompDragSelection(event);
+  event.preventDefault();
+}
+
+function finishCompDrag(event) {
+  if (!syncEditorDrag) return;
+  updateCompDragSelection(event);
+  const drag = syncEditorDrag;
+  syncEditorDrag = null;
+  drag.overlay.remove();
+  promoteCompRange(drag.takeId, drag.startSecs, drag.currentSecs);
+}
+
+async function saveSyncEditor() {
+  if (!syncEditorState || syncEditorState.busy) return;
+  const { cue, take } = editorCueAndTake();
+  if (!cue || !take) return;
+  syncEditorState.busy = true;
+  els.btnSyncEditorSave.disabled = true;
+  setSyncEditorStatus(syncEditorState.mode === 'comp' ? 'Rendering created take...' : 'Saving sync...');
+  try {
+    if (syncEditorState.mode === 'sync') {
+      const result = await window.api.cue.updateTakeEdit({ takeId: take.takeId, syncEdit: syncEditorState.syncEdit });
+      if (!result.success) throw new Error(result.error || 'Could not save the take sync.');
+      currentProject = result.project;
+      syncEditorState.syncEdit = normalizeEditorSyncEdit(currentProject.takes.find(item => item.takeId === take.takeId));
+      syncEditorState.dirty = false;
+      markUnsaved();
+      renderTakeList(cue.cueId);
+      renderCueList();
+      setSyncEditorStatus(`T${take.takeNumber} sync saved.`, 'ok');
+      setStatusOk(`Take ${take.takeNumber} sync saved.`);
+      renderSyncEditor();
+      return;
+    }
+
+    const result = await window.api.cue.createCompTake({
+      cueId: cue.cueId,
+      sourceTakeIds: Array.from(syncEditorState.selectedTakeIds),
+      segments: syncEditorState.segments,
+    });
+    if (!result.success) throw new Error(result.error || 'Could not create the comp take.');
+    currentProject = result.project;
+    markUnsaved();
+    renderTakeList(cue.cueId);
+    renderCueList();
+    const createdTake = result.take;
+    hideSyncEditor();
+    setStatusOk(`Created Take ${createdTake?.takeNumber || ''} from the comp.`);
+  } catch (err) {
+    syncEditorState.busy = false;
+    setSyncEditorStatus(err.message, 'error');
+    setStatusError(err.message);
+    renderSyncEditor();
+  } finally {
+    if (syncEditorState) syncEditorState.busy = false;
+  }
+}
+
+function getSyncEditorAuditionContext(timelineSeconds) {
+  if (!syncEditorState || els.modalSyncEditor?.classList.contains('hidden')) return null;
+  const { cue, take } = editorCueAndTake();
+  if (!cue || !take || !syncEditorState.activeAudition) return null;
+  const localTime = timelineSeconds - framesToSeconds(cue.inFrames);
+
+  if (syncEditorState.mode === 'comp' && syncEditorState.activeAudition.type === 'main') {
+    const segment = syncEditorState.segments.find(item => localTime >= item.timelineStartSecs
+      && localTime < item.timelineStartSecs + item.durationSecs);
+    if (!segment) return null;
+    const sourceTake = currentProject.takes.find(item => item.takeId === segment.sourceTakeId);
+    if (!sourceTake) return null;
+    const track = getEditorTakeTracks(sourceTake)[0];
+    return {
+      cue,
+      take: sourceTake,
+      track,
+      laneId: track.laneId || 'mic1',
+      offset: segment.sourceStartSecs + (localTime - segment.timelineStartSecs),
+      contextKey: `comp:${segment.segmentId}`,
+    };
+  }
+
+  const target = syncEditorState.activeAudition.type === 'source'
+    ? currentProject.takes.find(item => item.takeId === syncEditorState.activeAudition.takeId)
+    : take;
+  if (!target) return null;
+  const track = getTakeTrackForLane(target, syncEditorState.activeAudition.laneId || 'mic1');
+  if (!track?.filePath) return null;
+  const syncEdit = getEditorSyncForTake(target);
+  const window = getTakeEditWindow(target, track, syncEdit);
+  const start = getTakeTimelineOffsetSecs(target, track, syncEdit);
+  if (localTime < start || localTime >= start + window.durationSecs) return null;
+  return {
+    cue,
+    take: target,
+    track,
+    laneId: track.laneId || 'mic1',
+    offset: window.trimStartSecs + (localTime - start),
+    contextKey: `source:${target.takeId}:${track.laneId || 'mic1'}:${start.toFixed(4)}:${window.trimStartSecs.toFixed(4)}`,
+  };
+}
+
+async function syncEditorReviewPlayback(timelineSeconds) {
+  const context = getSyncEditorAuditionContext(timelineSeconds);
+  if (!context || !isTakesTrackAudible()) {
+    stopReviewPlayback();
+    return;
+  }
+  const target = getNativeTakeReviewTarget();
+  if (target === 'none') {
+    stopReviewPlayback();
+    return;
+  }
+  const playbackId = `editor:${context.contextKey}`;
+  if (nativeDeviceOpen) {
+    const same = nativeReviewPlaybackId === playbackId
+      && reviewAudioTakeId === context.take.takeId
+      && reviewAudioLaneId === context.laneId;
+    if (!same || Math.abs((reviewAudio?.currentTime || 0) - context.offset) > 0.12) {
+      if (nativeReviewPlaybackId) {
+        window.api.audioEngine.stopPlayback({ playbackId: nativeReviewPlaybackId }).catch(() => {});
+      }
+      const ok = await startNativeTakePlayback({ playbackId, filePath: context.track.filePath, offset: context.offset, target });
+      if (!ok) return;
+      nativeReviewPlaybackId = playbackId;
+      reviewAudioTakeId = context.take.takeId;
+      reviewAudioLaneId = context.laneId;
+      reviewAudioCueId = context.cue.cueId;
+      reviewAudio = { currentTime: context.offset, paused: false };
+    } else if (reviewAudio) {
+      reviewAudio.currentTime = context.offset;
+    }
+    return;
+  }
+
+  const same = reviewAudio
+    && reviewAudioTakeId === context.take.takeId
+    && reviewAudioLaneId === context.laneId
+    && reviewAudioCueId === context.cue.cueId;
+  if (!same) {
+    stopReviewPlayback();
+    const fileUrl = await resolveReviewFileUrl(context.track.filePath);
+    if (!fileUrl) return;
+    reviewAudio = new Audio(fileUrl);
+    reviewAudioTakeId = context.take.takeId;
+    reviewAudioLaneId = context.laneId;
+    reviewAudioCueId = context.cue.cueId;
+  }
+  reviewAudio.muted = !isTakesTrackAudible();
+  if (Math.abs((reviewAudio.currentTime || 0) - context.offset) > 0.12) reviewAudio.currentTime = context.offset;
+  if (reviewAudio.paused) await reviewAudio.play();
 }
 
 /**
@@ -6118,6 +6679,10 @@ els.cueDetailTakes.addEventListener('click', (event) => {
     toggleAuditionTrack(target.dataset.takeId, target.dataset.laneId);
   }
 
+  if (target.dataset.action === 'open-take-editor') {
+    showSyncEditor(target.dataset.takeId);
+  }
+
   if (target.dataset.action === 'toggle-takes-mute') {
     takesTrackMuted = !takesTrackMuted;
     applyMonitorState();
@@ -6144,17 +6709,139 @@ els.cueDetailTakes.addEventListener('contextmenu', async (event) => {
   const row = event.target.closest('.take-group, .take-lane-row');
   if (!row) return;
   event.preventDefault();
-  const filePath = row.dataset.filePath || row.closest('.take-group')?.dataset.filePath || '';
+  const takeId = row.dataset.takeId || row.closest('.take-group')?.dataset.takeId;
+  if (takeId) showSyncEditor(takeId);
+});
+
+els.btnSyncMode?.addEventListener('click', () => setSyncEditorMode('sync'));
+els.btnCompMode?.addEventListener('click', () => setSyncEditorMode('comp'));
+els.btnSyncEditorClose?.addEventListener('click', hideSyncEditor);
+els.btnSyncEditorCloseFooter?.addEventListener('click', hideSyncEditor);
+els.btnSyncEditorSave?.addEventListener('click', () => saveSyncEditor());
+els.btnSyncEditorMainSolo?.addEventListener('click', () => {
+  if (!syncEditorState) return;
+  const active = syncEditorState.activeAudition?.type === 'main';
+  syncEditorState.activeAudition = active ? null : { type: 'main' };
+  stopReviewPlayback();
+  renderSyncEditor();
+});
+els.btnSyncEditorReveal?.addEventListener('click', async () => {
+  const { take } = editorCueAndTake();
+  const filePath = getEditorTakeTracks(take)[0]?.filePath || take?.filePath;
   if (!filePath) {
-    setStatusWarn('No recorded file is attached to this take.');
+    setSyncEditorStatus('No source file is attached to this take.', 'error');
     return;
   }
   const result = await window.api.app.revealInFolder(filePath);
-  if (!result?.success) {
-    setStatusError(result?.error || 'Could not reveal the recorded file.');
+  if (!result?.success) setSyncEditorStatus(result?.error || 'Could not reveal the source file.', 'error');
+});
+
+function updateSyncEditorTimingFromInputs() {
+  const { take } = editorCueAndTake();
+  if (!take || !syncEditorState) return;
+  syncEditorState.syncEdit = normalizeEditorSyncEdit(take, {
+    ...syncEditorState.syncEdit,
+    offsetSecs: Number(els.syncEditorOffset.value),
+    trimStartSecs: Number(els.syncEditorTrimIn.value),
+    trimEndSecs: Number(els.syncEditorTrimOut.value),
+  });
+  syncEditorState.dirty = true;
+  setSyncEditorStatus('Unsaved sync changes.');
+  stopReviewPlayback();
+  renderSyncEditor();
+}
+
+[els.syncEditorOffset, els.syncEditorTrimIn, els.syncEditorTrimOut].forEach(input => {
+  input?.addEventListener('change', updateSyncEditorTimingFromInputs);
+});
+
+els.syncEditorSyncToolbar?.addEventListener('click', event => {
+  const button = event.target.closest('[data-sync-nudge]');
+  if (!button || !syncEditorState) return;
+  syncEditorState.syncEdit.offsetSecs = Math.min(30, Math.max(-30,
+    (Number(syncEditorState.syncEdit.offsetSecs) || 0) + Number(button.dataset.syncNudge)
+  ));
+  syncEditorState.dirty = true;
+  setSyncEditorStatus('Unsaved sync changes.');
+  stopReviewPlayback();
+  renderSyncEditor();
+});
+
+els.modalSyncEditor?.addEventListener('change', event => {
+  const target = event.target.closest('[data-editor-action]');
+  if (!target || !syncEditorState) return;
+  if (target.dataset.editorAction === 'toggle-comp-source') {
+    if (target.checked) syncEditorState.selectedTakeIds.add(target.dataset.takeId);
+    else syncEditorState.selectedTakeIds.delete(target.dataset.takeId);
+    syncEditorState.dirty = true;
+    renderSyncEditor();
+  }
+  if (target.dataset.editorAction === 'lane-offset') {
+    syncEditorState.syncEdit.laneOffsets[target.dataset.laneId] = Math.min(30, Math.max(-30, Number(target.value) || 0));
+    syncEditorState.dirty = true;
+    setSyncEditorStatus('Unsaved sync changes.');
+    stopReviewPlayback();
+    renderSyncEditor();
+  }
+});
+
+els.modalSyncEditor?.addEventListener('click', event => {
+  if (event.target === els.modalSyncEditor) {
+    hideSyncEditor();
     return;
   }
-  setStatusInfo('Recorded take revealed in file location.');
+  const target = event.target.closest('[data-editor-action]');
+  if (!target || !syncEditorState) return;
+  if (target.dataset.editorAction === 'audition-source') {
+    const same = syncEditorState.activeAudition?.type === 'source'
+      && syncEditorState.activeAudition.takeId === target.dataset.takeId
+      && syncEditorState.activeAudition.laneId === target.dataset.laneId;
+    syncEditorState.activeAudition = same ? null : {
+      type: 'source',
+      takeId: target.dataset.takeId,
+      laneId: target.dataset.laneId,
+    };
+    stopReviewPlayback();
+    renderSyncEditor();
+  }
+  if (target.dataset.editorAction === 'select-segment') {
+    syncEditorState.selectedSegmentId = target.dataset.segmentId;
+    renderSyncEditor();
+  }
+});
+
+els.modalSyncEditor?.addEventListener('pointerdown', event => {
+  const lane = event.target.closest('[data-comp-source-lane="true"]');
+  if (lane) beginCompDrag(event, lane);
+});
+window.addEventListener('pointermove', event => updateCompDragSelection(event));
+window.addEventListener('pointerup', event => finishCompDrag(event));
+
+els.btnSyncEditorUndo?.addEventListener('click', () => {
+  if (!syncEditorState?.undoStack.length) return;
+  syncEditorState.segments = syncEditorState.undoStack.pop();
+  syncEditorState.selectedSegmentId = null;
+  syncEditorState.dirty = true;
+  setSyncEditorStatus('Last comp edit undone.');
+  renderSyncEditor();
+});
+els.btnSyncEditorClear?.addEventListener('click', () => {
+  if (!syncEditorState?.segments.length) return;
+  pushSyncEditorUndo();
+  syncEditorState.segments = [];
+  syncEditorState.selectedSegmentId = null;
+  syncEditorState.dirty = true;
+  setSyncEditorStatus('Comp lane cleared.');
+  renderSyncEditor();
+});
+els.btnSyncEditorDelete?.addEventListener('click', () => {
+  if (!syncEditorState?.selectedSegmentId) return;
+  pushSyncEditorUndo();
+  syncEditorState.segments = syncEditorState.segments.filter(segment => segment.segmentId !== syncEditorState.selectedSegmentId);
+  syncEditorState.selectedSegmentId = null;
+  syncEditorState.dirty = true;
+  setSyncEditorStatus('Region removed from the comp.');
+  renderSyncEditor();
 });
 
 // Playback settings toggles
@@ -6446,6 +7133,7 @@ async function handleCancelCommand() {
     renderKeyboardShortcuts();
     return;
   }
+  if (syncEditorState && !els.modalSyncEditor?.classList.contains('hidden')) { hideSyncEditor(); return; }
   if (els.modalKeyboardShortcuts && !els.modalKeyboardShortcuts.classList.contains('hidden')) { hideKeyboardShortcutsModal(); return; }
   if (!els.modalActors.classList.contains('hidden'))      { hideActorModal();      return; }
   if (!els.modalCreateCue.classList.contains('hidden'))   { hideCreateCueModal();  return; }

@@ -780,6 +780,78 @@
     </div>
   </div>
 
+  <div class="modal-overlay hidden" id="modal-sync-editor">
+    <div class="modal sync-editor" role="dialog" aria-modal="true" aria-labelledby="sync-editor-title">
+      <div class="sync-editor-header">
+        <div class="sync-editor-heading">
+          <span class="modal-title" id="sync-editor-title">Take Editor</span>
+          <span class="modal-subtitle" id="sync-editor-subtitle">-</span>
+        </div>
+        <div class="segmented-control sync-editor-modes" role="tablist" aria-label="Editor mode">
+          <button class="seg-btn active" id="btn-sync-mode" role="tab" aria-selected="true">Sync</button>
+          <button class="seg-btn" id="btn-comp-mode" role="tab" aria-selected="false">Comp</button>
+        </div>
+        <button class="sync-editor-close" id="btn-sync-editor-close" title="Close editor" aria-label="Close editor">&times;</button>
+      </div>
+
+      <div class="sync-editor-body">
+        <div class="sync-editor-toolbar" id="sync-editor-sync-toolbar">
+          <label class="sync-editor-field">
+            <span>Take offset</span>
+            <span class="sync-editor-number"><input type="number" id="sync-editor-offset" min="-30" max="30" step="0.001" value="0" /><b>s</b></span>
+          </label>
+          <label class="sync-editor-field">
+            <span>Trim in</span>
+            <span class="sync-editor-number"><input type="number" id="sync-editor-trim-in" min="0" step="0.001" value="0" /><b>s</b></span>
+          </label>
+          <label class="sync-editor-field">
+            <span>Trim out</span>
+            <span class="sync-editor-number"><input type="number" id="sync-editor-trim-out" min="0" step="0.001" value="0" /><b>s</b></span>
+          </label>
+          <div class="sync-editor-nudge" aria-label="Nudge take">
+            <button class="btn btn-ghost btn-xs" data-sync-nudge="-0.01" title="Nudge earlier 10 ms">-10</button>
+            <button class="btn btn-ghost btn-xs" data-sync-nudge="-0.001" title="Nudge earlier 1 ms">-1</button>
+            <button class="btn btn-ghost btn-xs" data-sync-nudge="0.001" title="Nudge later 1 ms">+1</button>
+            <button class="btn btn-ghost btn-xs" data-sync-nudge="0.01" title="Nudge later 10 ms">+10</button>
+            <span>ms</span>
+          </div>
+        </div>
+
+        <div class="sync-editor-toolbar hidden" id="sync-editor-comp-toolbar">
+          <div class="sync-editor-source-picker" id="sync-editor-source-picker"></div>
+          <div class="sync-editor-comp-actions">
+            <button class="btn btn-ghost btn-sm" id="btn-comp-undo" disabled>Undo</button>
+            <button class="btn btn-ghost btn-sm" id="btn-comp-delete" disabled>Delete Region</button>
+            <button class="btn btn-ghost btn-sm" id="btn-comp-clear" disabled>Clear Main</button>
+          </div>
+        </div>
+
+        <div class="sync-editor-timeline" id="sync-editor-timeline">
+          <div class="sync-editor-ruler-label">Track</div>
+          <div class="sync-editor-ruler" id="sync-editor-ruler"></div>
+
+          <div class="sync-editor-track-label sync-editor-main-label">
+            <button class="sync-editor-solo" id="btn-editor-main-solo" aria-pressed="false" title="Audition main track">S</button>
+            <span>Main</span>
+            <small id="sync-editor-main-state">Source</small>
+          </div>
+          <div class="sync-editor-lane sync-editor-main-lane" id="sync-editor-main-lane"></div>
+
+          <div class="sync-editor-source-tracks" id="sync-editor-source-tracks"></div>
+        </div>
+      </div>
+
+      <div class="sync-editor-footer">
+        <span class="sync-editor-status" id="sync-editor-status">Ready</span>
+        <div class="sync-editor-footer-actions">
+          <button class="btn btn-ghost" id="btn-sync-editor-reveal">Reveal Source</button>
+          <button class="btn btn-ghost" id="btn-sync-editor-cancel">Close</button>
+          <button class="btn btn-primary" id="btn-sync-editor-save">Save Sync</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay hidden" id="modal-actors">
     <div class="modal modal-wide">
       <div class="modal-header">
