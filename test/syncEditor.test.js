@@ -7,7 +7,8 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { renderCompTake, parseWavFile } = require('../src/services/audio/compTakeRenderer');
-const { updateTake } = require('../src/core/projectState');
+const { updateTake, shiftCueTakeSyncOffsets } = require('../src/core/projectState');
+const { relinkProjectFiles } = require('../src/services/media/relinkProjectFiles');
 
 const SAMPLE_RATE = 48000;
 
@@ -101,4 +102,76 @@ test('updateTake changes only the requested take and preserves the input project
   assert.equal(result.project.takes[0].syncEdit.offsetSecs, 0.125);
   assert.equal(result.project.takes[1].syncEdit.offsetSecs, 0);
   assert.notEqual(result.project.updatedAt, 'before');
+});
+
+test('shiftCueTakeSyncOffsets changes only takes for the edited cue', () => {
+  const project = {
+    updatedAt: 'before',
+    takes: [
+      {
+        takeId: 'take-a',
+        cueId: 'cue-1',
+        syncEdit: { offsetSecs: 0.25, trimStartSecs: 0.1, trimEndSecs: 0.2, laneOffsets: { mic2: 0.03 } },
+      },
+      {
+        takeId: 'take-b',
+        cueId: 'cue-2',
+        syncEdit: { offsetSecs: 1, trimStartSecs: 0, trimEndSecs: 0, laneOffsets: {} },
+      },
+    ],
+  };
+
+  const result = shiftCueTakeSyncOffsets(project, 'cue-1', -2);
+  assert.equal(project.takes[0].syncEdit.offsetSecs, 0.25);
+  assert.equal(result.takes[0].syncEdit.offsetSecs, -1.75);
+  assert.equal(result.takes[0].syncEdit.trimStartSecs, 0.1);
+  assert.equal(result.takes[0].syncEdit.laneOffsets.mic2, 0.03);
+  assert.equal(result.takes[1].syncEdit.offsetSecs, 1);
+  assert.notEqual(result.updatedAt, 'before');
+});
+
+test('relinkProjectFiles reconnects missing video, take, and mic-track paths', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'post-adr-relink-'));
+  try {
+    const oldRoot = path.join(tempRoot, 'old-station');
+    const mediaRoot = path.join(tempRoot, 'new-station-media');
+    fs.mkdirSync(mediaRoot, { recursive: true });
+    const videoPath = path.join(mediaRoot, 'picture.mov');
+    const takePath = path.join(mediaRoot, 'take_001.wav');
+    const trackPath = path.join(mediaRoot, 'take_001_boom.wav');
+    fs.writeFileSync(videoPath, '');
+    fs.writeFileSync(takePath, '');
+    fs.writeFileSync(trackPath, '');
+
+    const project = {
+      updatedAt: 'before',
+      video: {
+        fileName: 'picture.mov',
+        localPath: path.join(oldRoot, 'picture.mov'),
+      },
+      takes: [
+        {
+          takeId: 'take-1',
+          cueId: 'cue-1',
+          takeNumber: 1,
+          filePath: path.join(oldRoot, 'take_001.wav'),
+          archiveDirectory: path.join(oldRoot, 'ADR-001'),
+          tracks: [
+            { laneId: 'mic1', label: 'Boom', filePath: path.join(oldRoot, 'take_001_boom.wav') },
+          ],
+        },
+      ],
+    };
+
+    const result = relinkProjectFiles(project, mediaRoot);
+    assert.equal(result.changed, true);
+    assert.equal(result.summary.relinked, 3);
+    assert.equal(result.project.video.localPath, videoPath);
+    assert.equal(result.project.takes[0].filePath, takePath);
+    assert.equal(result.project.takes[0].tracks[0].filePath, trackPath);
+    assert.equal(result.project.takes[0].archiveDirectory, mediaRoot);
+    assert.equal(project.video.localPath, path.join(oldRoot, 'picture.mov'));
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });

@@ -111,7 +111,6 @@
     .char-badge.visible { display: block; }
 
     .dialogue-overlay {
-      --dialogue-anchor-x: 50%;
       position: absolute;
       left: 0;
       right: 0;
@@ -129,30 +128,29 @@
       position: relative;
       width: 100%;
       max-width: 100%;
-      min-height: 3.2em;
+      min-height: 3.4em;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.18em;
     }
 
     .dialogue-line1 {
-      position: absolute;
-      left: var(--dialogue-anchor-x);
-      top: 0;
-      max-width: min(42vw, calc(100vw - var(--dialogue-anchor-x) - 4vw));
-      white-space: nowrap;
+      width: min(84vw, 1200px);
       line-height: 1.2;
-      font-weight: 500;
-      text-align: left;
+      font-weight: 650;
+      text-align: center;
+      overflow-wrap: anywhere;
       text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 8px rgba(0,0,0,0.35);
     }
 
     .dialogue-line2 {
-      position: absolute;
-      left: 50%;
-      top: 1.35em;
-      transform: translateX(-50%);
       width: min(70vw, 1100px);
       line-height: 1.2;
       font-weight: 500;
       text-align: center;
+      opacity: 0.72;
+      overflow-wrap: anywhere;
       text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 8px rgba(0,0,0,0.35);
     }
 

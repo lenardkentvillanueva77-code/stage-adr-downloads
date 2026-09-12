@@ -32,6 +32,7 @@ let cueOutTime = 0;
 let streamerTargetTime = null;
 let streamerTargetTimes = [];
 let streamerHitIndex = -1;
+const STREAMER_HIT_X_RATIO = 0.88;
 
 function showIdle() {
   idle.classList.remove('hidden');
@@ -166,30 +167,6 @@ function playSynced(targetTime, msg) {
   });
 }
 
-function splitDialogueLines(text) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) return { line1: '', line2: '' };
-  const words = trimmed.split(/\s+/);
-  const anchorX = window.innerWidth * 0.5;
-  const maxLine1Width = Math.max(160, Math.min(window.innerWidth * 0.42, window.innerWidth - anchorX - window.innerWidth * 0.04));
-  const style = getComputedStyle(dlgLine1);
-  const canvas = splitDialogueLines._canvas || (splitDialogueLines._canvas = document.createElement('canvas'));
-  const ctx = canvas.getContext('2d');
-  ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-
-  let line1 = words[0] || '';
-  let index = 1;
-  while (index < words.length) {
-    const candidate = `${line1} ${words[index]}`;
-    if (ctx.measureText(candidate).width > maxLine1Width) break;
-    line1 = candidate;
-    index += 1;
-  }
-
-  const line2 = words.slice(index).join(' ');
-  return { line1, line2 };
-}
-
 function getDialogueSegments(text) {
   return String(text || '')
     .split('//')
@@ -214,7 +191,7 @@ function getStreamerSequenceState() {
     ? normalizeStreamerTargetTimes(streamerTargetTimes)
     : (Number.isFinite(streamerTargetTime) ? [streamerTargetTime] : []);
 
-  if (targets.length >= 1 && dialogueSegments.length === targets.length) {
+  if (targets.length >= 1 && dialogueSegments.length >= 1 && targets.length <= dialogueSegments.length) {
     return {
       enabled: true,
       segments: dialogueSegments,
@@ -229,14 +206,19 @@ function getStreamerSequenceState() {
   };
 }
 
-function getCurrentDialogueText() {
+function getDialogueDisplayState() {
   const state = getStreamerSequenceState();
-  if (!state.segments.length) return '';
-  if (!state.enabled || !state.targets.length) return state.segments[0];
+  if (!state.segments.length) return { currentText: '', nextText: '' };
+  if (!state.enabled || !state.targets.length) {
+    return { currentText: state.segments[0], nextText: '' };
+  }
   const playbackTime = video.currentTime || 0;
   const completedHits = state.targets.filter(time => playbackTime >= time).length;
   const segmentIndex = Math.min(completedHits, state.segments.length - 1);
-  return state.segments[segmentIndex] || state.segments[0];
+  return {
+    currentText: state.segments[segmentIndex] || state.segments[0],
+    nextText: state.segments[segmentIndex + 1] || '',
+  };
 }
 
 function renderDialogue() {
@@ -244,17 +226,18 @@ function renderDialogue() {
   dlgOverlay.classList.remove('size-small', 'size-medium', 'size-large');
   dlgOverlay.classList.add(`size-${currentOverlayFontSize || 'medium'}`);
 
-  const trimmed = getCurrentDialogueText().trim();
-  if (!hasCue || !trimmed) {
+  const display = getDialogueDisplayState();
+  const currentText = display.currentText.trim();
+  const nextText = display.nextText.trim();
+  if (!hasCue || !currentText) {
     dlgLine1.textContent = '';
     dlgLine2.textContent = '';
     dlgOverlay.classList.remove('visible');
     return;
   }
 
-  const { line1, line2 } = splitDialogueLines(trimmed);
-  dlgLine1.textContent = line1;
-  dlgLine2.textContent = line2;
+  dlgLine1.textContent = currentText;
+  dlgLine2.textContent = nextText;
   dlgOverlay.classList.add('visible');
 }
 
@@ -278,7 +261,7 @@ function updateStreamer() {
   const completedHits = sequence.targets.filter(time => playbackTime >= time).length;
   if (completedHits - 1 > streamerHitIndex) {
     streamerHitIndex = completedHits - 1;
-    if (streamerHitIndex >= 0) flashStreamerHit(window.innerWidth * 0.5);
+    if (streamerHitIndex >= 0) flashStreamerHit(window.innerWidth * STREAMER_HIT_X_RATIO);
   }
   const nextTargetIndex = sequence.targets.findIndex(time => playbackTime < time);
   const targetTime = nextTargetIndex >= 0 ? sequence.targets[nextTargetIndex] : null;
@@ -294,7 +277,7 @@ function updateStreamer() {
     return;
   }
 
-  const anchorX = window.innerWidth * 0.5;
+  const anchorX = window.innerWidth * STREAMER_HIT_X_RATIO;
   const segmentStartTime = nextTargetIndex === 0 ? cueInTime : sequence.targets[nextTargetIndex - 1];
   const elapsed = Math.max(0, playbackTime - segmentStartTime);
   const targetLeadSeconds = targetTime - segmentStartTime;

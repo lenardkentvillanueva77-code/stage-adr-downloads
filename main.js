@@ -272,6 +272,7 @@ function buildMenu() {
         { label: 'Save Project As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => mainWindow?.webContents.send('menu:save-project-as') },
         { type: 'separator' },
         { label: 'Load Video…',      accelerator: 'CmdOrCtrl+L',       click: () => mainWindow?.webContents.send('menu:load-video') },
+        { label: 'Relink Files…',    accelerator: 'CmdOrCtrl+Shift+L', click: () => mainWindow?.webContents.send('menu:relink-files') },
         { label: 'Manage Actors…',   accelerator: 'CmdOrCtrl+M',       click: () => mainWindow?.webContents.send('menu:manage-actors') },
         { type: 'separator' },
         ...(isMac ? [] : [{ role: 'quit' }]),

@@ -32,10 +32,13 @@ const {
   addCharacter,
   addCue,
   updateCue,
+  shiftCueTakeSyncOffsets,
   removeCue,
   findCharacter,
 } = require('../core/projectState');
 const { getProject, getProjectFilePath } = require('./projectHandlers');
+
+const MAX_TAKE_SYNC_OFFSET_SECS = 300;
 
 /**
  * Compute the next ADR cue number from the current cue list.
@@ -79,6 +82,17 @@ function finiteWithin(value, min, max, fallback = 0) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
+function parseFrameRate(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  const stringValue = String(value || '').trim();
+  if (stringValue.includes('/')) {
+    const [num, den] = stringValue.split('/').map(Number);
+    if (num > 0 && den > 0) return num / den;
+  }
+  const parsed = parseFloat(stringValue);
+  return parsed > 0 ? parsed : 25;
+}
+
 function normalizeSyncEdit(value, take) {
   const source = value && typeof value === 'object' ? value : {};
   const duration = Math.max(0, Number(take.durationSecs) || 0);
@@ -92,7 +106,7 @@ function normalizeSyncEdit(value, take) {
     }
   }
   return {
-    offsetSecs: finiteWithin(source.offsetSecs, -30, 30, 0),
+    offsetSecs: finiteWithin(source.offsetSecs, -MAX_TAKE_SYNC_OFFSET_SECS, MAX_TAKE_SYNC_OFFSET_SECS, 0),
     trimStartSecs,
     trimEndSecs,
     laneOffsets,
@@ -186,7 +200,8 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
 
   // ── Update Cue ────────────────────────────────────────────────────────────
   // patch may contain: { dialogue, notes, characterId, status, inFrames, outFrames }
-  // Timing edits are allowed only while the cue has no recorded takes.
+  // Cue timing edits keep other cues fixed. When cue In changes after recording,
+  // take sync offsets are shifted so the recorded audio keeps its timeline place.
   ipcMain.handle('cue:updateCue', async (_event, { cueId, patch }) => {
     let project = getProject();
     if (!project) return { success: false, error: 'No project is open.' };
@@ -206,9 +221,6 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
     const hasRecordedTakes = (project.takes || []).some(take => take.cueId === cueId);
 
     if ('inFrames' in safePatch || 'outFrames' in safePatch) {
-      if (hasRecordedTakes) {
-        return { success: false, error: 'Cue timing is locked once recordings exist.' };
-      }
       const nextInFrames = 'inFrames' in safePatch ? safePatch.inFrames : exists.inFrames;
       const nextOutFrames = 'outFrames' in safePatch ? safePatch.outFrames : exists.outFrames;
       if (typeof nextInFrames !== 'number' || typeof nextOutFrames !== 'number') {
@@ -281,7 +293,18 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
       return { success: false, error: 'Streamer target must stay within the cue in/out range.' };
     }
 
+    const cueInDeltaFrames = hasRecordedTakes && 'inFrames' in safePatch
+      ? safePatch.inFrames - exists.inFrames
+      : 0;
+
     project = updateCue(project, cueId, safePatch);
+    if (cueInDeltaFrames) {
+      project = shiftCueTakeSyncOffsets(
+        project,
+        cueId,
+        -(cueInDeltaFrames / parseFrameRate(project.settings?.frameRate))
+      );
+    }
     projectHandlerExports._setProject(project);
 
     return { success: true, project };

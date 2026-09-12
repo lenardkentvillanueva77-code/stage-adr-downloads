@@ -230,6 +230,48 @@ function updateCue(project, cueId, patch) {
   return touchProject(next);
 }
 
+function roundSeconds(value) {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+/**
+ * Move every recorded take for a cue by the same metadata offset.
+ * Used when cue In changes so the take audio stays in the same absolute
+ * timeline position while the cue boundary itself moves.
+ *
+ * @param {object} project
+ * @param {string} cueId
+ * @param {number} offsetDeltaSecs
+ * @returns {object} new project
+ */
+function shiftCueTakeSyncOffsets(project, cueId, offsetDeltaSecs) {
+  const delta = Number(offsetDeltaSecs);
+  if (!cueId || !Number.isFinite(delta) || delta === 0) return project;
+
+  const next = deepClone(project);
+  let changed = false;
+  const now = nowISO();
+
+  next.takes = (next.takes || []).map((take) => {
+    if (take.cueId !== cueId) return take;
+    changed = true;
+    const source = take.syncEdit && typeof take.syncEdit === 'object' ? take.syncEdit : {};
+    return {
+      ...take,
+      updatedAt: now,
+      syncEdit: {
+        offsetSecs: roundSeconds((Number(source.offsetSecs) || 0) + delta),
+        trimStartSecs: Number(source.trimStartSecs) || 0,
+        trimEndSecs: Number(source.trimEndSecs) || 0,
+        laneOffsets: { ...(source.laneOffsets || {}) },
+        updatedAt: now,
+      },
+    };
+  });
+
+  return changed ? touchProject(next) : project;
+}
+
 /**
  * Remove a cue. Also removes all takes for that cue.
  * @param {object} project
@@ -412,6 +454,7 @@ module.exports = {
   // Cues
   addCue,
   updateCue,
+  shiftCueTakeSyncOffsets,
   removeCue,
   // Takes
   addTake,

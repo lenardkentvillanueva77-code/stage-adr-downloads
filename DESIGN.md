@@ -3,7 +3,7 @@
 ## Source of truth
 - Status: Active
 - Last refreshed: 2026-09-12
-- Primary product surfaces: ADR timeline, cue inspector, takes monitor, Sync/Comp Editor, audio console, actor booth.
+- Primary product surfaces: ADR timeline, cue inspector, takes monitor, Sync/Comp Editor, relink workflow, audio console, actor booth.
 - Evidence reviewed: `renderer/index.html`, `renderer/styles.css`, `renderer/app.js`, `docs/adr-take-review-and-character-comp-export.md`, and the native audio routing documentation under `docs/`.
 
 ## Brand
@@ -12,13 +12,13 @@
 - Avoid: Marketing layouts, oversized display text, decorative gradients, playful copy, ambiguous transport states, and deeply rounded surfaces.
 
 ## Product goals
-- Goals: Make ADR spotting, recording, sync correction, take comparison, and comp creation usable in one desktop workflow.
+- Goals: Make ADR spotting, recording, sync correction, take comparison, comp creation, and transferred-station relinking usable in one desktop workflow.
 - Non-goals: Reproduce a full DAW, replace detailed mix automation, or add destructive source-file editing.
-- Success signals: Operators can correct a take without leaving the app, A/B sources quickly, create a clearly marked comp take, and recover all edits from the project file.
+- Success signals: Operators can correct a take without leaving the app, A/B sources quickly, create a clearly marked comp take, relink moved media from one folder, and recover all edits from the project file.
 
 ## Personas and jobs
 - Primary personas: ADR recordists, dialogue editors, supervising sound editors, and small post-production teams.
-- User jobs: Record performances, align them to picture, compare takes, choose source regions, create a comp, and export dependable deliverables.
+- User jobs: Record performances, align them to picture, compare takes, choose source regions, create a comp, relink session media on another workstation, and export dependable deliverables.
 - Key contexts of use: Dark control rooms, time-pressured sessions, mouse-and-keyboard operation, and multi-monitor desktop setups.
 
 ## Information architecture
@@ -41,9 +41,9 @@
 - Imagery/iconography: Picture and waveform content carry the visual surface; use familiar symbols and existing text controls where icon infrastructure is absent.
 
 ## Components
-- Existing components to reuse: Buttons, segmented controls, modal overlay, take groups, lane monitor states, status bar, and timing inputs.
-- New/changed components: Full-width Sync/Comp Editor, mode tabs, editor ruler, main lane, source lane, region block, range handles, source checklist, and created-take marker.
-- Variants and states: Sync/Comp mode, audible/muted source, selected/unselected source, saved/dirty editor, recorded/created take, empty comp lane, and invalid range.
+- Existing components to reuse: Buttons, segmented controls, modal overlay, take groups, lane monitor states, status bar, menu actions, and timing inputs.
+- New/changed components: Full-width Sync/Comp Editor, mode tabs, editor ruler, main lane, source lane, region block, range handles, source checklist, created-take marker, File > Relink Files action, and booth current/next dialogue lines.
+- Variants and states: Sync/Comp mode, audible/muted source, selected/unselected source, saved/dirty editor, recorded/created take, relinked/missing/conflicting file references, empty comp lane, and invalid range.
 - Token/component ownership: Reuse `renderer/styles.css` root tokens and keep editor-specific rules under one Sync/Comp Editor section.
 
 ## Accessibility
@@ -61,8 +61,8 @@
 ## Interaction states
 - Loading: Disable save/audition while a comp render is running and show status text.
 - Empty: Explain that Comp Mode needs at least one source take and that the main lane has no regions yet.
-- Error: Keep the editor open, preserve decisions, and show the failure in the app status bar and editor status.
-- Success: Refresh the takes list and identify the saved take number.
+- Error: Keep the editor open, preserve decisions, and show the failure in the app status bar and editor status; for relink, report missing and duplicate-name conflicts without guessing.
+- Success: Refresh the takes list and identify the saved take number; for relink, refresh linked video/audio paths and mark the project unsaved.
 - Disabled: Unavailable audition and save actions are visibly disabled.
 - Offline/slow network, if applicable: All editor behavior is local and does not require a network.
 
@@ -75,7 +75,7 @@
 - Framework/styling system: Plain Electron renderer HTML/CSS/JavaScript with CommonJS main-process modules.
 - Design-token constraints: Extend existing CSS custom properties; do not introduce a second token system.
 - Performance constraints: Keep editor rendering DOM-based and bounded to takes for the selected cue; render audio off the renderer thread through IPC.
-- Compatibility constraints: Existing project files and recorded takes must load without migration; new edit fields are optional.
+- Compatibility constraints: Existing project files and recorded takes must load without migration; new edit fields are optional; cue start/end edits never move neighboring cues and preserve existing take placement by shifting take sync metadata when cue In changes.
 - Test/screenshot expectations: Run syntax checks and focused model/audio tests; smoke-test the Electron UI when the environment permits.
 
 ## Open questions

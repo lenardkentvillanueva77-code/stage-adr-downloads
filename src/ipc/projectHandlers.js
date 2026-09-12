@@ -28,6 +28,7 @@ const {
 } = require('../services/persistence/localStore');
 const autosave = require('../services/persistence/autosave');
 const recentProjects = require('../services/persistence/recentProjects');
+const { relinkProjectFiles } = require('../services/media/relinkProjectFiles');
 
 // ── Module init ───────────────────────────────────────────────────────────────
 
@@ -103,6 +104,34 @@ function register(ipcMain, getWindow, onRecentProjectsChanged = () => {}) {
     }
 
     return { success: true, folderPath: result.filePaths[0] };
+  });
+
+  ipcMain.handle('project:relinkFiles', async () => {
+    if (!_project) return { success: false, error: 'No project is open.' };
+
+    const win = getWindow();
+    const folders = _project.settings?.projectFolders || {};
+    const defaultPath = folders.mediaPath || folders.rootPath || app.getPath('documents');
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Relink Files',
+      defaultPath,
+      properties: ['openDirectory'],
+    });
+
+    if (result.canceled || !result.filePaths?.[0]) {
+      return { success: false, error: 'Relink cancelled.' };
+    }
+
+    const relink = relinkProjectFiles(_project, result.filePaths[0]);
+    if (relink.error) return { success: false, error: relink.error };
+
+    _project = relink.project;
+    return {
+      success: true,
+      project: _project,
+      changed: relink.changed,
+      ...relink.summary,
+    };
   });
 
   // ── New Project ─────────────────────────────────────────────────────────────

@@ -147,6 +147,7 @@ const COMP_TAKES_TOTAL = 3;      // hardcoded: 3 takes per comp loop
 const MIN_PENDING_RECORDING_SECS = 0.3;
 const WAVEFORM_AREA_MIN_HEIGHT = 80;
 const WAVEFORM_AREA_MAX_HEIGHT = 420;
+const MAX_TAKE_SYNC_OFFSET_SECS = 300;
 
 // Web Audio context
 let _audioCtx = null;
@@ -321,21 +322,13 @@ function getDialogueStreamerSegments(text) {
 function cueHasValidStreamerSequence(cue) {
   const targets = getCueStreamerTargetFrames(cue);
   if (!targets.length) return false;
-  return getDialogueStreamerSegments(cue?.dialogue || '').length === targets.length;
-}
-
-function getCueTakeCount(cueId) {
-  if (!currentProject || !cueId) return 0;
-  return (currentProject.takes || []).filter(take => take.cueId === cueId).length;
+  const segments = getDialogueStreamerSegments(cue?.dialogue || '');
+  return segments.length > 0 && targets.length <= segments.length;
 }
 
 function getCueById(cueId) {
   if (!currentProject || !cueId) return null;
   return currentProject.cues.find(cue => cue.cueId === cueId) || null;
-}
-
-function selectedCueAllowsTimingEdit() {
-  return !!selectedCueId && getCueTakeCount(selectedCueId) === 0;
 }
 
 function getCueBoothPayload(cue, characterName = '') {
@@ -3091,10 +3084,6 @@ async function resyncPlaybackTargetsForCurrentTimeline({
 
 function markIn() {
   if (!currentProject || els.videoPlayer.readyState < 1) return;
-  if (selectedCueId && !selectedCueAllowsTimingEdit()) {
-    setStatusWarn('Cue timing is locked after recording. Create a new cue if you need a different region.');
-    return;
-  }
   const previousInFrames = regionInFrames;
   const nextInFrames = secondsToFrames(els.videoPlayer.currentTime);
   if (previousInFrames !== null && regionStreamerTargetFrames.length) {
@@ -3116,10 +3105,6 @@ function markIn() {
 
 function markOut() {
   if (!currentProject || els.videoPlayer.readyState < 1) return;
-  if (selectedCueId && !selectedCueAllowsTimingEdit()) {
-    setStatusWarn('Cue timing is locked after recording. Create a new cue if you need a different region.');
-    return;
-  }
   const f = secondsToFrames(els.videoPlayer.currentTime);
   if (regionInFrames !== null && f <= regionInFrames) {
     setStatusWarn('Mark Out must be after Mark In.'); return;
@@ -3196,10 +3181,6 @@ async function submitCueTimingUpdate() {
   if (!selectedCueId || !currentProject) return;
   const cue = getCueById(selectedCueId);
   if (!cue) return;
-  if (!selectedCueAllowsTimingEdit()) {
-    setStatusWarn('Cue timing is locked after recording.');
-    return;
-  }
   if (regionInFrames === null || regionOutFrames === null || regionOutFrames <= regionInFrames) {
     setStatusWarn('Set a valid In and Out before updating the cue.');
     return;
@@ -4443,7 +4424,7 @@ function normalizeEditorSyncEdit(take, value = take?.syncEdit) {
     if (Number.isFinite(number)) laneOffsets[laneId] = Math.min(30, Math.max(-30, number));
   }
   return {
-    offsetSecs: Math.min(30, Math.max(-30, Number(source.offsetSecs) || 0)),
+    offsetSecs: Math.min(MAX_TAKE_SYNC_OFFSET_SECS, Math.max(-MAX_TAKE_SYNC_OFFSET_SECS, Number(source.offsetSecs) || 0)),
     trimStartSecs,
     trimEndSecs,
     laneOffsets,
@@ -4963,13 +4944,8 @@ function updateCreateCueButton() {
     return;
   }
   if (selectedCueId) {
-    if (selectedCueAllowsTimingEdit()) {
-      els.btnCreateCue.textContent = 'Update Cue';
-      els.btnCreateCue.disabled = !(hasRegion && selectedCueTimingIsDirty());
-    } else {
-      els.btnCreateCue.textContent = 'Cue Locked';
-      els.btnCreateCue.disabled = true;
-    }
+    els.btnCreateCue.textContent = 'Update Cue';
+    els.btnCreateCue.disabled = !(hasRegion && selectedCueTimingIsDirty());
     return;
   }
   els.btnCreateCue.textContent = 'Create Cue';
@@ -5346,7 +5322,7 @@ async function selectCue(cueId) {
   // Update dialogue overlay
   updateDialogueOverlay();
 
-  // Create Cue is disabled while a cue is selected
+  // Create Cue becomes Update Cue while a cue is selected.
   updateCreateCueButton();
 
   // Notify booth — low frequency, not awaited
@@ -6758,7 +6734,7 @@ function updateSyncEditorTimingFromInputs() {
 els.syncEditorSyncToolbar?.addEventListener('click', event => {
   const button = event.target.closest('[data-sync-nudge]');
   if (!button || !syncEditorState) return;
-  syncEditorState.syncEdit.offsetSecs = Math.min(30, Math.max(-30,
+  syncEditorState.syncEdit.offsetSecs = Math.min(MAX_TAKE_SYNC_OFFSET_SECS, Math.max(-MAX_TAKE_SYNC_OFFSET_SECS,
     (Number(syncEditorState.syncEdit.offsetSecs) || 0) + Number(button.dataset.syncNudge)
   ));
   syncEditorState.dirty = true;
@@ -7878,6 +7854,71 @@ async function saveProjectAs() {
   setStatusOk(`Saved As: ${result.filePath}`);
 }
 
+function relinkSummaryText(result) {
+  const relinked = Number(result?.relinked) || 0;
+  const missing = Number(result?.missing) || 0;
+  const conflicts = Number(result?.conflicts) || 0;
+  const scanned = Number(result?.scannedFiles) || 0;
+  const notes = [];
+  if (missing) notes.push(`${missing} missing`);
+  if (conflicts) notes.push(`${conflicts} conflict${conflicts === 1 ? '' : 's'}`);
+  if (!scanned) notes.push('no media files scanned');
+  if (!relinked) {
+    return `No files relinked${notes.length ? ` (${notes.join(', ')})` : ''}.`;
+  }
+  return `Relinked ${relinked} item${relinked === 1 ? '' : 's'}${notes.length ? ` (${notes.join(', ')})` : ''}.`;
+}
+
+async function relinkProjectFilesFromFolder() {
+  if (!currentProject) {
+    setStatusWarn('Open or create a project first.');
+    return;
+  }
+
+  setStatusInfo('Selecting relink folder...');
+  const previousSelectedCueId = selectedCueId;
+  const result = await window.api.project.relinkFiles();
+  if (!result.success) {
+    result.error !== 'Relink cancelled.'
+      ? setStatusError(`Relink failed: ${result.error}`)
+      : setStatusInfo('Relink cancelled.');
+    return;
+  }
+
+  if (!result.changed) {
+    setStatusWarn(relinkSummaryText(result));
+    return;
+  }
+
+  cancelPreroll();
+  stopReviewPlayback();
+  stopGoodTakesPlayback();
+  reviewUrlCache.clear();
+  if (syncEditorState) hideSyncEditor();
+  isLooping = false;
+  hideWaveformUI();
+  unloadVideoPlayer();
+
+  applyProjectToUI(result.project, currentFilePath);
+  markUnsaved();
+
+  const video = currentProject?.video;
+  if (video?.localPath) {
+    const rv = await window.api.media.resolveVideo(video.localPath);
+    if (rv.success) {
+      loadVideoInPlayer(rv.videoSrc);
+      const wv = await window.api.waveform.load();
+      if (wv.success) applyPeakData(wv.peaks, wv.guideAudioPath);
+    }
+  }
+
+  if (previousSelectedCueId && currentProject?.cues?.some(cue => cue.cueId === previousSelectedCueId)) {
+    await selectCue(previousSelectedCueId);
+  }
+
+  setStatusOk(relinkSummaryText(result));
+}
+
 els.btnLoadVideo.addEventListener('click', async () => {
   if (!currentProject) { setStatusWarn('Open or create a project first.'); return; }
   setStatusInfo('Selecting video file…');
@@ -8030,6 +8071,7 @@ window.api.onMenu.openRecentProject?.(async (filePath) => {
 window.api.onMenu.saveProject(  () => els.btnSaveProject.click());
 window.api.onMenu.saveProjectAs(() => saveProjectAs());
 window.api.onMenu.loadVideo(    () => els.btnLoadVideo.click());
+window.api.onMenu.relinkFiles?.(() => relinkProjectFilesFromFolder());
 window.api.onMenu.manageActors?.(() => {
   if (currentProject) showActorModal();
 });
