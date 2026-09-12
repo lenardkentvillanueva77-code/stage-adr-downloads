@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
     getCurrent:      ()     => ipcRenderer.invoke('project:getCurrent'),
     relinkFiles:     ()     => ipcRenderer.invoke('project:relinkFiles'),
     setVideo:        (meta) => ipcRenderer.invoke('project:setVideo', meta),
+    updateSettings:  (settings) => ipcRenderer.invoke('project:updateSettings', settings),
     updateWorkspaceSettings: (workspace, opts = {}) => ipcRenderer.invoke('project:updateWorkspaceSettings', { workspace, ...opts }),
     autosave:        ()     => ipcRenderer.invoke('project:autosave'),
     checkAutosave:   ()     => ipcRenderer.invoke('project:checkAutosave'),

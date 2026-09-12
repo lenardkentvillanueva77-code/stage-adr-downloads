@@ -1,6 +1,6 @@
 'use strict';
 
-const { framesToTimecode } = require('../../core/timecode');
+const { framesToProjectTimecode, getProjectStartFrameOffset } = require('../../core/timecode');
 
 const MANIFEST_SCHEMA = 'post-adr-remote-cue-manifest-v1';
 const REMOTE_MEDIA_MODE = 'cue-proxy';
@@ -32,6 +32,7 @@ function cueDurationFrames(cue) {
 
 function buildRemoteCueRows(project) {
   const frameRate = getFrameRate(project);
+  const startFrameOffset = getProjectStartFrameOffset(project, frameRate);
   const characters = buildLookup(project.characters, 'characterId');
   const actors = buildLookup(project.actors, 'actorId');
 
@@ -59,8 +60,10 @@ function buildRemoteCueRows(project) {
           inFrames: Number(cue.inFrames || 0),
           outFrames: Number(cue.outFrames || 0),
           durationFrames: cueDurationFrames(cue),
-          inTimecode: framesToTimecode(Number(cue.inFrames || 0), frameRate),
-          outTimecode: framesToTimecode(Number(cue.outFrames || 0), frameRate),
+          startFrameOffset,
+          startTimecode: project.settings?.startTimecode || framesToProjectTimecode(0, frameRate, startFrameOffset),
+          inTimecode: framesToProjectTimecode(Number(cue.inFrames || 0), frameRate, startFrameOffset),
+          outTimecode: framesToProjectTimecode(Number(cue.outFrames || 0), frameRate, startFrameOffset),
         },
         remote: {
           eligible: remoteEligible,
@@ -98,6 +101,8 @@ function buildRemoteCueManifest(project) {
       schemaVersion: project.schemaVersion || '',
       appVersion: project.appVersion || '',
       frameRate,
+      startTimecode: project.settings?.startTimecode || framesToProjectTimecode(0, frameRate, getProjectStartFrameOffset(project, frameRate)),
+      startFrameOffset: getProjectStartFrameOffset(project, frameRate),
       sampleRate: project.settings?.sampleRate || '',
       bitDepth: project.settings?.bitDepth || '',
       video: project.video ? {

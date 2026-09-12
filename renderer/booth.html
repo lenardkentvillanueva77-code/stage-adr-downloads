@@ -128,11 +128,21 @@
       position: relative;
       width: 100%;
       max-width: 100%;
-      min-height: 3.4em;
+      min-height: 4.8em;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 0.18em;
+    }
+
+    .dialogue-line-prev {
+      width: min(68vw, 1000px);
+      line-height: 1.15;
+      font-weight: 500;
+      text-align: center;
+      opacity: 0.44;
+      overflow-wrap: anywhere;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.55), 0 0 8px rgba(0,0,0,0.35);
     }
 
     .dialogue-line1 {
@@ -166,12 +176,36 @@
       position: absolute;
       top: 0;
       bottom: 0;
-      width: 18px;
-      background: rgba(57, 255, 20, 0.3);
+      width: 22px;
+      background: rgba(57, 255, 20, 0.42);
+      box-shadow: 0 0 18px rgba(57, 255, 20, 0.56);
       display: none;
       will-change: transform;
     }
     .streamer-bar.visible { display: block; }
+
+    .streamer-target-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      display: none;
+      background: rgba(130, 255, 120, 0.92);
+      box-shadow: 0 0 16px rgba(57, 255, 20, 0.82);
+      transform: translateX(-50%);
+    }
+    .streamer-target-line.visible { display: block; }
+
+    .streamer-start-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      display: none;
+      background: rgba(130, 255, 120, 0.26);
+      transform: translateX(-50%);
+    }
+    .streamer-start-line.visible { display: block; }
 
     .streamer-hit-flash {
       position: absolute;
@@ -244,12 +278,15 @@
     <div class="char-badge" id="char-badge"></div>
 
     <div class="streamer-layer" id="streamer-layer">
+      <div class="streamer-start-line" id="streamer-start-line"></div>
+      <div class="streamer-target-line" id="streamer-target-line"></div>
       <div class="streamer-hit-flash" id="streamer-hit-flash"></div>
       <div class="streamer-bar" id="streamer-bar"></div>
     </div>
 
     <div class="dialogue-overlay size-medium" id="dialogue-overlay">
       <div class="dialogue-anchor" id="dialogue-anchor">
+        <div class="dialogue-line-prev" id="dialogue-line-prev"></div>
         <div class="dialogue-line1" id="dialogue-line1"></div>
         <div class="dialogue-line2" id="dialogue-line2"></div>
       </div>

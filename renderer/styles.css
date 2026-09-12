@@ -996,6 +996,25 @@ body.timeline-resizing {
 .field-value { flex: 1; font-size: 12px; color: var(--text-primary); word-break: break-all; min-width: 0; }
 .field-value.small { font-size: 11px; color: var(--text-secondary); }
 .field-value.field-mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+.timecode-field-input {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 2px 4px;
+  outline: none;
+}
+.timecode-field-input:hover {
+  border-color: var(--border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+}
+.timecode-field-input:focus {
+  color: var(--text-primary);
+  border-color: var(--accent-blue);
+  background: var(--bg-input);
+}
 .lock-badge { font-size: 10px; color: var(--accent-orange); background: rgba(201,106,0,0.12); padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid rgba(201,106,0,0.25); }
 
 .audio-engine-device-list {
@@ -1468,6 +1487,10 @@ body.timeline-resizing {
 .cue-timing-item { display: flex; flex-direction: column; gap: 1px; }
 .cue-timing-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); }
 .cue-timing-value { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); }
+input.cue-timing-value {
+  width: 86px;
+  flex: 0 0 86px;
+}
 .cue-timing-sep   { color: var(--text-tertiary); font-size: 12px; margin-top: 8px; }
 
 .cue-overlap-detail {
@@ -1569,6 +1592,17 @@ body.timeline-resizing {
   padding: 4px 12px; background: var(--bg-secondary);
   border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
   user-select: none;
+}
+input.timecode-display {
+  width: 174px;
+  text-align: center;
+  outline: none;
+  user-select: text;
+  -webkit-app-region: no-drag;
+}
+input.timecode-display:focus {
+  color: var(--text-primary);
+  border-color: var(--accent-blue);
 }
 .video-timecode {
   position: absolute;
@@ -2398,6 +2432,9 @@ button:focus-visible {
   background: rgba(218,184,74,0.28);
   pointer-events: none;
 }
+.video-timecode.timecode-input {
+  pointer-events: auto;
+}
 .sync-editor-lane-empty {
   position: absolute;
   inset: 0;
@@ -2450,6 +2487,11 @@ button:focus-visible {
 .sync-editor-status.error { color: var(--accent-red); }
 .sync-editor-status.ok { color: #9be7a8; }
 .sync-editor-footer-actions { display: flex; gap: 7px; flex: 0 0 auto; }
+.sync-editor-footer-actions #btn-sync-editor-play.active {
+  border-color: rgba(218,184,74,0.8);
+  background: rgba(218,184,74,0.18);
+  color: #e0c66b;
+}
 .take-created-chip {
   display: inline-flex;
   align-items: center;

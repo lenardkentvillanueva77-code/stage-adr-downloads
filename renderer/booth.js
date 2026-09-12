@@ -5,11 +5,14 @@ const idle = document.getElementById('idle');
 const charBadge = document.getElementById('char-badge');
 const dlgOverlay = document.getElementById('dialogue-overlay');
 const dlgAnchor = document.getElementById('dialogue-anchor');
+const dlgPrev = document.getElementById('dialogue-line-prev');
 const dlgLine1 = document.getElementById('dialogue-line1');
 const dlgLine2 = document.getElementById('dialogue-line2');
 const tcOverlay = document.getElementById('timecode-overlay');
 const countdownDots = document.getElementById('countdown-dots');
 const streamerBar = document.getElementById('streamer-bar');
+const streamerStartLine = document.getElementById('streamer-start-line');
+const streamerTargetLine = document.getElementById('streamer-target-line');
 const streamerHitFlash = document.getElementById('streamer-hit-flash');
 const cdots = [
   document.getElementById('cdot-1'),
@@ -32,7 +35,9 @@ let cueOutTime = 0;
 let streamerTargetTime = null;
 let streamerTargetTimes = [];
 let streamerHitIndex = -1;
-const STREAMER_HIT_X_RATIO = 0.88;
+let streamerStartPositionRatio = 0.12;
+let streamerHitPositionRatio = 0.72;
+let startFrameOffset = 0;
 
 function showIdle() {
   idle.classList.remove('hidden');
@@ -58,7 +63,7 @@ function parseFrameRate(value) {
 function secondsToTC(seconds) {
   const fps = boothFps || 25;
   const nominal = Math.round(fps);
-  const totalFrames = Math.max(0, Math.round((seconds || 0) * fps));
+  const totalFrames = Math.max(0, Math.round((seconds || 0) * fps) + startFrameOffset);
   const hh = Math.floor(totalFrames / (nominal * 3600));
   const mm = Math.floor(totalFrames / (nominal * 60)) % 60;
   const ss = Math.floor(totalFrames / nominal) % 60;
@@ -69,11 +74,27 @@ function secondsToTC(seconds) {
 
 function applyDisplaySettings(msg) {
   if ('frameRate' in msg) boothFps = parseFrameRate(msg.frameRate);
+  if ('startFrameOffset' in msg) {
+    const offset = Number(msg.startFrameOffset);
+    startFrameOffset = Number.isFinite(offset) && offset >= 0 ? Math.round(offset) : 0;
+  }
   if ('showTimecode' in msg) showTimecode = !!msg.showTimecode;
   if ('overlayColor' in msg && msg.overlayColor) currentOverlayColor = msg.overlayColor;
   if ('overlayFontSize' in msg && msg.overlayFontSize) currentOverlayFontSize = msg.overlayFontSize;
+  if ('streamerHitPositionRatio' in msg) {
+    const ratio = Number(msg.streamerHitPositionRatio);
+    if (Number.isFinite(ratio)) streamerHitPositionRatio = Math.max(0.30, Math.min(0.95, ratio));
+  }
+  if ('streamerStartPositionRatio' in msg) {
+    const ratio = Number(msg.streamerStartPositionRatio);
+    if (Number.isFinite(ratio)) streamerStartPositionRatio = Math.max(0.02, Math.min(0.85, ratio));
+  }
+  if (streamerStartPositionRatio >= streamerHitPositionRatio - 0.05) {
+    streamerStartPositionRatio = Math.max(0.02, streamerHitPositionRatio - 0.05);
+  }
   tcOverlay.classList.toggle('visible', showTimecode);
   tcOverlay.textContent = secondsToTC(video.currentTime || 0);
+  updateStreamerTargetLine();
   renderDialogue();
 }
 
@@ -208,14 +229,15 @@ function getStreamerSequenceState() {
 
 function getDialogueDisplayState() {
   const state = getStreamerSequenceState();
-  if (!state.segments.length) return { currentText: '', nextText: '' };
+  if (!state.segments.length) return { previousText: '', currentText: '', nextText: '' };
   if (!state.enabled || !state.targets.length) {
-    return { currentText: state.segments[0], nextText: '' };
+    return { previousText: '', currentText: state.segments[0], nextText: '' };
   }
   const playbackTime = video.currentTime || 0;
   const completedHits = state.targets.filter(time => playbackTime >= time).length;
   const segmentIndex = Math.min(completedHits, state.segments.length - 1);
   return {
+    previousText: segmentIndex > 0 ? state.segments[segmentIndex - 1] : '',
     currentText: state.segments[segmentIndex] || state.segments[0],
     nextText: state.segments[segmentIndex + 1] || '',
   };
@@ -227,23 +249,53 @@ function renderDialogue() {
   dlgOverlay.classList.add(`size-${currentOverlayFontSize || 'medium'}`);
 
   const display = getDialogueDisplayState();
+  const previousText = display.previousText.trim();
   const currentText = display.currentText.trim();
   const nextText = display.nextText.trim();
   if (!hasCue || !currentText) {
+    dlgPrev.textContent = '';
     dlgLine1.textContent = '';
     dlgLine2.textContent = '';
     dlgOverlay.classList.remove('visible');
     return;
   }
 
+  dlgPrev.textContent = previousText;
   dlgLine1.textContent = currentText;
   dlgLine2.textContent = nextText;
   dlgOverlay.classList.add('visible');
 }
 
-function hideStreamer() {
+function hideMovingStreamer() {
   streamerBar.classList.remove('visible');
   streamerHitFlash.classList.remove('visible');
+}
+
+function hideStreamer() {
+  hideMovingStreamer();
+  streamerStartLine.classList.remove('visible');
+  streamerTargetLine.classList.remove('visible');
+}
+
+function getStreamerHitX() {
+  return window.innerWidth * streamerHitPositionRatio;
+}
+
+function getStreamerStartX() {
+  return window.innerWidth * streamerStartPositionRatio;
+}
+
+function updateStreamerTargetLine() {
+  const sequence = getStreamerSequenceState();
+  if (!hasCue || !sequence.enabled || !sequence.targets.length) {
+    streamerStartLine.classList.remove('visible');
+    streamerTargetLine.classList.remove('visible');
+    return;
+  }
+  streamerStartLine.style.left = `${getStreamerStartX()}px`;
+  streamerTargetLine.style.left = `${getStreamerHitX()}px`;
+  streamerStartLine.classList.add('visible');
+  streamerTargetLine.classList.add('visible');
 }
 
 function flashStreamerHit(anchorX) {
@@ -261,7 +313,7 @@ function updateStreamer() {
   const completedHits = sequence.targets.filter(time => playbackTime >= time).length;
   if (completedHits - 1 > streamerHitIndex) {
     streamerHitIndex = completedHits - 1;
-    if (streamerHitIndex >= 0) flashStreamerHit(window.innerWidth * STREAMER_HIT_X_RATIO);
+    if (streamerHitIndex >= 0) flashStreamerHit(getStreamerHitX());
   }
   const nextTargetIndex = sequence.targets.findIndex(time => playbackTime < time);
   const targetTime = nextTargetIndex >= 0 ? sequence.targets[nextTargetIndex] : null;
@@ -272,27 +324,32 @@ function updateStreamer() {
     !isFinite(targetTime) ||
     video.paused
   ) {
-    hideStreamer();
+    hideMovingStreamer();
+    updateStreamerTargetLine();
     requestAnimationFrame(updateStreamer);
     return;
   }
 
-  const anchorX = window.innerWidth * STREAMER_HIT_X_RATIO;
+  updateStreamerTargetLine();
+  const startX = getStreamerStartX();
+  const anchorX = getStreamerHitX();
   const segmentStartTime = nextTargetIndex === 0 ? cueInTime : sequence.targets[nextTargetIndex - 1];
   const elapsed = Math.max(0, playbackTime - segmentStartTime);
   const targetLeadSeconds = targetTime - segmentStartTime;
   if (!(targetLeadSeconds > 0)) {
-    hideStreamer();
+    hideMovingStreamer();
+    updateStreamerTargetLine();
     requestAnimationFrame(updateStreamer);
     return;
   }
-  const pixelsPerSecond = anchorX / targetLeadSeconds;
+  const pixelsPerSecond = (anchorX - startX) / targetLeadSeconds;
   const barWidth = streamerBar.offsetWidth || 18;
-  const leadingX = elapsed * pixelsPerSecond;
+  const leadingX = startX + elapsed * pixelsPerSecond;
   const left = leadingX - barWidth;
 
-  if (leadingX < -barWidth || left > window.innerWidth) {
-    hideStreamer();
+  if (leadingX < startX - barWidth || left > window.innerWidth) {
+    hideMovingStreamer();
+    updateStreamerTargetLine();
     requestAnimationFrame(updateStreamer);
     return;
   }
@@ -305,6 +362,7 @@ function updateStreamer() {
 requestAnimationFrame(updateStreamer);
 
 window.addEventListener('resize', () => {
+  updateStreamerTargetLine();
   renderDialogue();
 });
 

@@ -19,7 +19,7 @@ const { app, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { createProject, touchProject } = require('../core/models/Project');
-const { setVideo }                    = require('../core/projectState');
+const { setVideo, updateSettings }    = require('../core/projectState');
 const {
   writeProject,
   readProject,
@@ -29,6 +29,7 @@ const {
 const autosave = require('../services/persistence/autosave');
 const recentProjects = require('../services/persistence/recentProjects');
 const { relinkProjectFiles } = require('../services/media/relinkProjectFiles');
+const { isValidTimecode } = require('../core/timecode');
 
 // ── Module init ───────────────────────────────────────────────────────────────
 
@@ -305,6 +306,31 @@ function register(ipcMain, getWindow, onRecentProjectsChanged = () => {}) {
     if (!_project) return { success: false, error: 'No project is open.' };
     _project = setVideo(_project, videoMeta);
     return { success: true, project: _project };
+  });
+
+  ipcMain.handle('project:updateSettings', async (_event, settingsPatch = {}) => {
+    if (!_project) return { success: false, error: 'No project is open.' };
+    if (!settingsPatch || typeof settingsPatch !== 'object') {
+      return { success: false, error: 'settingsPatch must be an object.' };
+    }
+    const allowed = ['startTimecode', 'startFrameOffset'];
+    const safePatch = {};
+    for (const key of allowed) {
+      if (key in settingsPatch) safePatch[key] = settingsPatch[key];
+    }
+    if ('startTimecode' in safePatch && !isValidTimecode(safePatch.startTimecode)) {
+      return { success: false, error: 'startTimecode must use HH:MM:SS:FF.' };
+    }
+    if ('startFrameOffset' in safePatch) {
+      const offset = Number(safePatch.startFrameOffset);
+      if (!Number.isFinite(offset) || offset < 0) {
+        return { success: false, error: 'startFrameOffset must be a non-negative number.' };
+      }
+      safePatch.startFrameOffset = Math.round(offset);
+    }
+    const result = updateSettings(_project, safePatch);
+    _project = result.project;
+    return { success: true, project: _project, warning: result.warning };
   });
 
   ipcMain.handle('project:updateWorkspaceSettings', async (_event, payload = {}) => {

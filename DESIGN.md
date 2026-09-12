@@ -2,9 +2,9 @@
 
 ## Source of truth
 - Status: Active
-- Last refreshed: 2026-09-12
-- Primary product surfaces: ADR timeline, cue inspector, takes monitor, Sync/Comp Editor, relink workflow, audio console, actor booth.
-- Evidence reviewed: `renderer/index.html`, `renderer/styles.css`, `renderer/app.js`, `docs/adr-take-review-and-character-comp-export.md`, and the native audio routing documentation under `docs/`.
+- Last refreshed: 2026-09-13
+- Primary product surfaces: ADR timeline, cue inspector, takes monitor, Sync/Comp Editor, relink workflow, audio console, actor booth streamer.
+- Evidence reviewed: `renderer/index.html`, `renderer/styles.css`, `renderer/app.js`, `renderer/booth.js`, `src/core/timecode.js`, export services under `src/services/export/`, `docs/adr-take-review-and-character-comp-export.md`, and the native audio routing documentation under `docs/`.
 
 ## Brand
 - Personality: Professional, focused, technical, and calm under session pressure.
@@ -14,11 +14,11 @@
 ## Product goals
 - Goals: Make ADR spotting, recording, sync correction, take comparison, comp creation, and transferred-station relinking usable in one desktop workflow.
 - Non-goals: Reproduce a full DAW, replace detailed mix automation, or add destructive source-file editing.
-- Success signals: Operators can correct a take without leaving the app, A/B sources quickly, create a clearly marked comp take, relink moved media from one folder, and recover all edits from the project file.
+- Success signals: Operators can correct a take without leaving the app, A/B sources quickly, audition unsaved editor changes against picture, create a clearly marked comp take, relink moved media from one folder, enter production timecode directly for cue/scrub work, and recover all edits from the project file.
 
 ## Personas and jobs
 - Primary personas: ADR recordists, dialogue editors, supervising sound editors, and small post-production teams.
-- User jobs: Record performances, align them to picture, compare takes, choose source regions, create a comp, relink session media on another workstation, and export dependable deliverables.
+- User jobs: Record performances, align them to picture, compare takes, choose source regions, create a comp, relink session media on another workstation, set a production start timecode, type or paste cue/scrub timecode, and export dependable deliverables.
 - Key contexts of use: Dark control rooms, time-pressured sessions, mouse-and-keyboard operation, and multi-monitor desktop setups.
 
 ## Information architecture
@@ -42,13 +42,13 @@
 
 ## Components
 - Existing components to reuse: Buttons, segmented controls, modal overlay, take groups, lane monitor states, status bar, menu actions, and timing inputs.
-- New/changed components: Full-width Sync/Comp Editor, mode tabs, editor ruler, main lane, source lane, region block, range handles, source checklist, created-take marker, File > Relink Files action, and booth current/next dialogue lines.
-- Variants and states: Sync/Comp mode, audible/muted source, selected/unselected source, saved/dirty editor, recorded/created take, relinked/missing/conflicting file references, empty comp lane, and invalid range.
+- New/changed components: Full-width Sync/Comp Editor, mode tabs, editor ruler, main lane, source lane, region block, range handles, source checklist, editor audition transport, created-take marker, editable scrub timecode, editable region/cue In/Out timecodes, session Start TC field, File > Relink Files action, and booth previous/current/next streamer dialogue with configurable screen-space travel bounds.
+- Variants and states: Sync/Comp mode, audible/muted source, selected/unselected source, editor audition playing/stopped, saved/dirty editor, recorded/created take, relinked/missing/conflicting file references, empty comp lane, configurable streamer travel bounds, invalid range, invalid timecode, and project-start timecode offset.
 - Token/component ownership: Reuse `renderer/styles.css` root tokens and keep editor-specific rules under one Sync/Comp Editor section.
 
 ## Accessibility
 - Target standard: Practical WCAG 2.1 AA for desktop controls and text.
-- Keyboard/focus behavior: Native inputs and buttons remain keyboard reachable; Escape closes the editor; range inputs expose numeric alternatives.
+- Keyboard/focus behavior: Native inputs and buttons remain keyboard reachable; Enter commits focused timecode inputs; Escape reverts focused timecode inputs or closes the editor; range inputs expose numeric alternatives.
 - Contrast/readability: Technical labels use existing high-contrast palette; state is shown with both color and text.
 - Screen-reader semantics: Mode and audition buttons expose pressed/selected state; source selection uses native checkboxes.
 - Reduced motion and sensory considerations: No required animation; editor state changes are immediate.
@@ -75,7 +75,7 @@
 - Framework/styling system: Plain Electron renderer HTML/CSS/JavaScript with CommonJS main-process modules.
 - Design-token constraints: Extend existing CSS custom properties; do not introduce a second token system.
 - Performance constraints: Keep editor rendering DOM-based and bounded to takes for the selected cue; render audio off the renderer thread through IPC.
-- Compatibility constraints: Existing project files and recorded takes must load without migration; new edit fields are optional; cue start/end edits never move neighboring cues and preserve existing take placement by shifting take sync metadata when cue In changes.
+- Compatibility constraints: Existing project files and recorded takes must load without migration; new edit fields are optional; cue start/end edits never move neighboring cues and preserve existing take placement by shifting take sync metadata when cue In changes; project Start TC is display/export metadata and must not move media, cues, or take audio on the internal timeline.
 - Test/screenshot expectations: Run syntax checks and focused model/audio tests; smoke-test the Electron UI when the environment permits.
 
 ## Open questions

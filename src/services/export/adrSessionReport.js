@@ -1,6 +1,6 @@
 'use strict';
 
-const { framesToTimecode } = require('../../core/timecode');
+const { framesToProjectTimecode, getProjectStartFrameOffset } = require('../../core/timecode');
 
 function safe(value) {
   return value == null ? '' : String(value);
@@ -21,6 +21,7 @@ function buildAdrSessionRows(project) {
   const cues = project.cues || [];
   const takes = project.takes || [];
   const frameRate = project.settings?.frameRate || project.video?.frameRate || '25';
+  const startFrameOffset = getProjectStartFrameOffset(project, frameRate);
   const projectRecordingOffsetMs = project.settings?.workspace?.recordingOffsetMs;
   const projectStartOffsetSecs = typeof projectRecordingOffsetMs === 'number'
     ? projectRecordingOffsetMs / 1000
@@ -42,8 +43,8 @@ function buildAdrSessionRows(project) {
       cueNumber: cue.cueNumber || take.cueNumber || '',
       cueInFrames: cue.inFrames ?? '',
       cueOutFrames: cue.outFrames ?? '',
-      cueInTimecode: typeof cue.inFrames === 'number' ? framesToTimecode(cue.inFrames, frameRate) : '',
-      cueOutTimecode: typeof cue.outFrames === 'number' ? framesToTimecode(cue.outFrames, frameRate) : '',
+      cueInTimecode: typeof cue.inFrames === 'number' ? framesToProjectTimecode(cue.inFrames, frameRate, startFrameOffset) : '',
+      cueOutTimecode: typeof cue.outFrames === 'number' ? framesToProjectTimecode(cue.outFrames, frameRate, startFrameOffset) : '',
       takeNumber: take.takeNumber,
       takeName: take.takeName || `T${String(take.takeNumber || '').padStart(2, '0')}`,
       goodTake: take.isSelected ? 'YES' : 'NO',

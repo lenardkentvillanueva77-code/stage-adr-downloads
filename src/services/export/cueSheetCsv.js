@@ -21,7 +21,7 @@
  * @returns {Buffer}  UTF-8 with BOM
  */
 
-const { framesToTimecode } = require('../../core/timecode');
+const { framesToProjectTimecode, getProjectStartFrameOffset } = require('../../core/timecode');
 
 const COLUMNS = [
   'Cue Number',
@@ -51,6 +51,7 @@ function csvField(value) {
  */
 function generateCueSheetCsv({ project }) {
   const frameRate = project.settings?.frameRate || '25';
+  const startFrameOffset = getProjectStartFrameOffset(project, frameRate);
 
   // Build character lookup map
   const charMap = Object.fromEntries(
@@ -66,8 +67,8 @@ function generateCueSheetCsv({ project }) {
   // Data rows
   for (const cue of cues) {
     const charName = charMap[cue.characterId] || '';
-    const inTc     = framesToTimecode(cue.inFrames,  frameRate);
-    const outTc    = framesToTimecode(cue.outFrames, frameRate);
+    const inTc     = framesToProjectTimecode(cue.inFrames,  frameRate, startFrameOffset);
+    const outTc    = framesToProjectTimecode(cue.outFrames, frameRate, startFrameOffset);
 
     rows.push([
       csvField(cue.cueNumber     || ''),

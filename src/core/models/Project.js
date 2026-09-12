@@ -37,6 +37,8 @@ function createProject({ filmTitle, projectName }) {
       frameRate: '',
       sampleRate: '48000',
       bitDepth: '24',
+      startTimecode: '00:00:00:00',
+      startFrameOffset: 0,
       defaultCountInFrames: 8,
       micLabels: ['Boom', 'Lav'],
     },

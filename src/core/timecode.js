@@ -113,6 +113,20 @@ function framesToTimecode(frames, frameRateStr) {
   }
 }
 
+function framesToProjectTimecode(frames, frameRateStr, startFrameOffset = 0) {
+  const offset = Number.isFinite(Number(startFrameOffset)) ? Math.max(0, Math.round(Number(startFrameOffset))) : 0;
+  return framesToTimecode(Math.max(0, Math.round(frames || 0) + offset), frameRateStr);
+}
+
+function getProjectStartFrameOffset(projectOrSettings, frameRateStr) {
+  const settings = projectOrSettings?.settings || projectOrSettings || {};
+  const frameRate = frameRateStr || settings.frameRate || '25';
+  const storedOffset = Number(settings.startFrameOffset);
+  if (Number.isFinite(storedOffset) && storedOffset >= 0) return Math.round(storedOffset);
+  if (isValidTimecode(settings.startTimecode)) return timecodeToFrames(settings.startTimecode, frameRate);
+  return 0;
+}
+
 /**
  * Convert a SMPTE timecode string to a frame count.
  *
@@ -213,6 +227,8 @@ function pad(n) {
 module.exports = {
   parseFrameRate,
   framesToTimecode,
+  framesToProjectTimecode,
+  getProjectStartFrameOffset,
   timecodeToFrames,
   framesToSeconds,
   secondsToFrames,

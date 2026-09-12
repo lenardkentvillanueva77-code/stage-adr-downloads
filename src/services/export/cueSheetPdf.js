@@ -33,7 +33,7 @@ const PDFDocument = require('pdfkit');
 const path        = require('path');
 const fs          = require('fs');
 
-const { framesToTimecode } = require('../../core/timecode');
+const { framesToProjectTimecode, getProjectStartFrameOffset } = require('../../core/timecode');
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -109,6 +109,7 @@ function generateCueSheetPdf({ project, preparedBy }) {
 
 function _renderDocument(doc, project, preparedBy) {
   const frameRate = project.settings?.frameRate || '25';
+  const startFrameOffset = getProjectStartFrameOffset(project, frameRate);
 
   // Build sorted cue rows with resolved character names
   const charMap = Object.fromEntries(
@@ -120,7 +121,7 @@ function _renderDocument(doc, project, preparedBy) {
 
   const rows = cues.map(cue => ({
     character: charMap[cue.characterId] || '—',
-    timecode:  _formatTimecode(cue.inFrames, cue.outFrames, frameRate),
+    timecode:  _formatTimecode(cue.inFrames, cue.outFrames, frameRate, startFrameOffset),
     line:      (cue.dialogue || '').trim() || '—',
     notes:     (cue.notes    || '').trim(),
   }));
@@ -337,11 +338,11 @@ function _drawFooter(doc, preparedBy) {
 
 /**
  * Format In and Out frames as "HH:MM:SS:FF - HH:MM:SS:FF".
- * Uses authoritative framesToTimecode from core/timecode.js.
+ * Uses authoritative project timecode conversion from core/timecode.js.
  */
-function _formatTimecode(inFrames, outFrames, frameRate) {
-  const tcIn  = framesToTimecode(inFrames,  frameRate);
-  const tcOut = framesToTimecode(outFrames, frameRate);
+function _formatTimecode(inFrames, outFrames, frameRate, startFrameOffset = 0) {
+  const tcIn  = framesToProjectTimecode(inFrames,  frameRate, startFrameOffset);
+  const tcOut = framesToProjectTimecode(outFrames, frameRate, startFrameOffset);
   return `${tcIn} - ${tcOut}`;
 }
 

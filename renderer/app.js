@@ -168,6 +168,8 @@ const wsDefaults = {
   playbackVolume:          1.0,      // 0.0 – 1.0, controls video element volume
   cueBeepVolume:           0.45,     // 0.0 – 1.0, controls pre-roll beep gain
   cueBeepType:             'beep',
+  streamerStartPositionRatio: 0.12,
+  streamerHitPositionRatio: 0.72,
   recordingOffsetMs:       0,
   recordMode:              'normal',
   waveformHeightPx:        110,
@@ -212,6 +214,7 @@ let activeAuditionTakeId = null;
 let activeAuditionLaneId = null;
 let syncEditorState = null;
 let syncEditorDrag = null;
+let syncEditorPlaybackActive = false;
 let reviewAudio = null;
 let reviewAudioTakeId = null;
 let reviewAudioLaneId = null;
@@ -345,7 +348,10 @@ function getCueBoothPayload(cue, characterName = '') {
     overlayColor: ws.dialogueOverlayColor,
     overlayFontSize: ws.dialogueOverlayFontSize,
     showTimecode: ws.boothTimecodeEnabled,
+    streamerStartPositionRatio: ws.streamerStartPositionRatio,
+    streamerHitPositionRatio: ws.streamerHitPositionRatio,
     frameRate: currentProject?.settings?.frameRate || '25',
+    startFrameOffset: getProjectStartFrameOffset(),
   };
 }
 
@@ -475,6 +481,7 @@ const els = {
   vmetaBitrate:           document.getElementById('vmeta-bitrate'),
   vmetaFormat:            document.getElementById('vmeta-format'),
   settingsFramerate:      document.getElementById('settings-framerate'),
+  settingsStartTimecode:  document.getElementById('settings-start-timecode'),
   settingsSamplerate:     document.getElementById('settings-samplerate'),
   settingsBitdepth:       document.getElementById('settings-bitdepth'),
   framerateLockedRow:     document.getElementById('framerate-lock-row'),
@@ -523,6 +530,10 @@ const els = {
   settingPlaybackVolPct:  document.getElementById('setting-playback-volume-pct'),
   settingBeepVolume:      document.getElementById('setting-beep-volume'),
   settingBeepVolPct:      document.getElementById('setting-beep-volume-pct'),
+  settingStreamerStartPosition: document.getElementById('setting-streamer-start-position'),
+  settingStreamerStartPositionPct: document.getElementById('setting-streamer-start-position-pct'),
+  settingStreamerHitPosition: document.getElementById('setting-streamer-hit-position'),
+  settingStreamerHitPositionPct: document.getElementById('setting-streamer-hit-position-pct'),
   waveformVideoVolume:    document.getElementById('waveform-video-volume'),
   btnBoothTcToggle:       document.getElementById('btn-booth-tc-toggle'),
   btnPrerollToggle:       document.getElementById('btn-preroll-toggle'),
@@ -586,6 +597,8 @@ const els = {
   btnSyncEditorClear:     document.getElementById('btn-comp-clear'),
   btnSyncEditorDelete:    document.getElementById('btn-comp-delete'),
   syncEditorStatus:       document.getElementById('sync-editor-status'),
+  btnSyncEditorPlay:      document.getElementById('btn-sync-editor-play'),
+  btnSyncEditorStop:      document.getElementById('btn-sync-editor-stop'),
   btnSyncEditorReveal:    document.getElementById('btn-sync-editor-reveal'),
   btnSyncEditorCloseFooter: document.getElementById('btn-sync-editor-cancel'),
   btnSyncEditorSave:      document.getElementById('btn-sync-editor-save'),
@@ -1557,6 +1570,7 @@ function renderAudioEngineDevices(devices) {
 
 function getFps() {
   const fr = currentProject?.settings?.frameRate || '25';
+  if (typeof fr === 'number') return fr > 0 ? fr : 25;
   if (fr.includes('/')) {
     const [n, d] = fr.split('/').map(Number);
     return d ? n / d : 25;
@@ -1565,22 +1579,93 @@ function getFps() {
 }
 
 function secondsToTC(t) {
-  if (!isFinite(t) || t < 0) return '00:00:00:00';
+  if (!isFinite(t) || t < 0) return framesToTC(0);
+  return framesToTC(secondsToFrames(t));
+}
+
+function getTimecodeInfo() {
   const fps = getFps();
-  const nom = Math.round(fps);
-  const tf  = Math.floor(t * fps);
-  const ff  = tf % nom;
-  const ss  = Math.floor(tf / nom) % 60;
-  const mm  = Math.floor(tf / (nom * 60)) % 60;
-  const hh  = Math.floor(tf / (nom * 3600));
-  const sep = (fps > 29.9 && fps < 30.0) || (fps > 59.9 && fps < 60.0) ? ';' : ':';
+  const nominal = Math.max(1, Math.round(fps));
+  const drop = (fps > 29.9 && fps < 30.0) || (fps > 59.9 && fps < 60.0);
+  return { fps, nominal, drop };
+}
+
+function getProjectStartFrameOffset() {
+  const settings = currentProject?.settings || {};
+  const storedOffset = Number(settings.startFrameOffset);
+  if (Number.isFinite(storedOffset) && storedOffset >= 0) return Math.round(storedOffset);
+  const parsed = timecodeToAbsoluteFrames(settings.startTimecode);
+  return parsed === null ? 0 : parsed;
+}
+
+function frameNumberToTC(frames) {
+  const { nominal, drop } = getTimecodeInfo();
+  let totalFrames = Math.max(0, Math.round(Number(frames) || 0));
+  if (drop) {
+    const dropFrames = nominal === 30 ? 2 : 4;
+    const framesPerMin = nominal * 60 - dropFrames;
+    const framesPer10Min = nominal * 600 - dropFrames * 9;
+    const d = Math.floor(totalFrames / framesPer10Min);
+    const m = totalFrames % framesPer10Min;
+    totalFrames += dropFrames * 9 * d + dropFrames * Math.max(0, Math.floor((m - dropFrames) / framesPerMin));
+  }
+  const ff = totalFrames % nominal;
+  const ss = Math.floor(totalFrames / nominal) % 60;
+  const mm = Math.floor(totalFrames / (nominal * 60)) % 60;
+  const hh = Math.floor(totalFrames / (nominal * 3600));
   return [hh, mm, ss].map(v => String(v).padStart(2, '0')).join(':') +
-         sep + String(ff).padStart(2, '0');
+         (drop ? ';' : ':') + String(ff).padStart(2, '0');
+}
+
+function timecodeToAbsoluteFrames(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{1,2}):(\d{2}):(\d{2})[:;](\d{2})$/);
+  if (!match) return null;
+  const [, hhText, mmText, ssText, ffText] = match;
+  const hh = Number(hhText);
+  const mm = Number(mmText);
+  const ss = Number(ssText);
+  const ff = Number(ffText);
+  const { nominal, drop } = getTimecodeInfo();
+  if ([hh, mm, ss, ff].some(Number.isNaN) || mm > 59 || ss > 59 || ff >= nominal) return null;
+  if (drop) {
+    const dropFrames = nominal === 30 ? 2 : 4;
+    const totalMinutes = 60 * hh + mm;
+    return Math.max(0, nominal * 3600 * hh + nominal * 60 * mm + nominal * ss + ff -
+      dropFrames * (totalMinutes - Math.floor(totalMinutes / 10)));
+  }
+  return hh * 3600 * nominal + mm * 60 * nominal + ss * nominal + ff;
+}
+
+function timecodeToMediaFrames(value) {
+  const absoluteFrames = timecodeToAbsoluteFrames(value);
+  if (absoluteFrames === null) return null;
+  return absoluteFrames - getProjectStartFrameOffset();
+}
+
+function normalizeTimecodeValue(value) {
+  const absoluteFrames = timecodeToAbsoluteFrames(value);
+  return absoluteFrames === null ? null : frameNumberToTC(absoluteFrames);
 }
 
 function secondsToFrames(t) { return Math.round(t * getFps()); }
 function framesToSeconds(f) { const fps = getFps(); return fps > 0 ? f / fps : 0; }
-function framesToTC(f)      { return secondsToTC(framesToSeconds(f)); }
+function framesToTC(f)      { return frameNumberToTC(Math.max(0, Math.round(Number(f) || 0) + getProjectStartFrameOffset())); }
+
+function setControlText(control, value) {
+  if (!control) return;
+  if ('value' in control) control.value = value;
+  else control.textContent = value;
+}
+
+function getControlText(control) {
+  if (!control) return '';
+  return 'value' in control ? control.value : control.textContent;
+}
+
+function setLiveTimecode(control, value) {
+  if (document.activeElement !== control) setControlText(control, value);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE SETTINGS (persisted in project.settings.workspace)
@@ -1599,6 +1684,8 @@ function loadWorkspaceSettings() {
     playbackVolume:          saved.playbackVolume          ?? wsDefaults.playbackVolume,
     cueBeepVolume:           saved.cueBeepVolume           ?? wsDefaults.cueBeepVolume,
     cueBeepType:             saved.cueBeepType             ?? wsDefaults.cueBeepType,
+    streamerStartPositionRatio: clampStreamerStartPositionRatio(saved.streamerStartPositionRatio ?? wsDefaults.streamerStartPositionRatio),
+    streamerHitPositionRatio: clampStreamerHitPositionRatio(saved.streamerHitPositionRatio ?? wsDefaults.streamerHitPositionRatio),
     recordingOffsetMs:       saved.recordingOffsetMs       ?? wsDefaults.recordingOffsetMs,
     recordMode:              saved.recordMode              ?? wsDefaults.recordMode,
     waveformHeightPx:        clampWaveformAreaHeight(saved.waveformHeightPx ?? wsDefaults.waveformHeightPx),
@@ -1627,6 +1714,7 @@ function loadWorkspaceSettings() {
       },
     },
   };
+  normalizeStreamerScreenPositions();
   recordMode = ws.recordMode === 'punch-in' ? 'punch-in' : 'normal';
   applyWorkspaceSettingsToUI();
 }
@@ -1654,6 +1742,26 @@ function clampWaveformAreaHeight(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return wsDefaults.waveformHeightPx;
   return Math.max(WAVEFORM_AREA_MIN_HEIGHT, Math.min(getWaveformAreaMaxHeight(), Math.round(numericValue)));
+}
+
+function clampStreamerHitPositionRatio(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return wsDefaults.streamerHitPositionRatio;
+  return Math.max(0.30, Math.min(0.95, numericValue));
+}
+
+function clampStreamerStartPositionRatio(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return wsDefaults.streamerStartPositionRatio;
+  return Math.max(0.02, Math.min(0.85, numericValue));
+}
+
+function normalizeStreamerScreenPositions() {
+  ws.streamerHitPositionRatio = clampStreamerHitPositionRatio(ws.streamerHitPositionRatio);
+  ws.streamerStartPositionRatio = clampStreamerStartPositionRatio(ws.streamerStartPositionRatio);
+  if (ws.streamerStartPositionRatio >= ws.streamerHitPositionRatio - 0.05) {
+    ws.streamerStartPositionRatio = Math.max(0.02, ws.streamerHitPositionRatio - 0.05);
+  }
 }
 
 function applyWaveformAreaHeight(value) {
@@ -1723,6 +1831,7 @@ function updateRecordingOffsetFeedback() {
 }
 
 function applyWorkspaceSettingsToUI() {
+  normalizeStreamerScreenPositions();
   els.settingPrerollEnabled.checked = ws.cuePrerollEnabled;
   els.settingOverlayEnabled.checked = ws.dialogueOverlayEnabled;
   els.settingBoothTcEnabled.checked = ws.boothTimecodeEnabled;
@@ -1740,6 +1849,14 @@ function applyWorkspaceSettingsToUI() {
   els.settingPlaybackVolPct.textContent = Math.round(ws.playbackVolume * 100) + '%';
   els.settingBeepVolume.value      = ws.cueBeepVolume;
   els.settingBeepVolPct.textContent = Math.round(ws.cueBeepVolume * 100) + '%';
+  if (els.settingStreamerStartPosition) {
+    els.settingStreamerStartPosition.value = ws.streamerStartPositionRatio;
+    els.settingStreamerStartPositionPct.textContent = Math.round(ws.streamerStartPositionRatio * 100) + '%';
+  }
+  if (els.settingStreamerHitPosition) {
+    els.settingStreamerHitPosition.value = ws.streamerHitPositionRatio;
+    els.settingStreamerHitPositionPct.textContent = Math.round(ws.streamerHitPositionRatio * 100) + '%';
+  }
   if (els.beepTypeSelect) els.beepTypeSelect.value = ws.cueBeepType;
   if (els.beepModalVolume) els.beepModalVolume.value = ws.cueBeepVolume;
   if (els.audioEngineRecordingOffsetMs) els.audioEngineRecordingOffsetMs.value = ws.recordingOffsetMs;
@@ -1768,6 +1885,29 @@ function applyWorkspaceSettingsToUI() {
   updateCompactPlaybackButtons();
   applyMonitorState();
   updateDialogueOverlay();
+}
+
+function syncStreamerPositionControls() {
+  normalizeStreamerScreenPositions();
+  if (els.settingStreamerStartPosition) {
+    els.settingStreamerStartPosition.value = ws.streamerStartPositionRatio;
+    els.settingStreamerStartPositionPct.textContent = Math.round(ws.streamerStartPositionRatio * 100) + '%';
+  }
+  if (els.settingStreamerHitPosition) {
+    els.settingStreamerHitPosition.value = ws.streamerHitPositionRatio;
+    els.settingStreamerHitPositionPct.textContent = Math.round(ws.streamerHitPositionRatio * 100) + '%';
+  }
+}
+
+function sendBoothDisplaySettings() {
+  boothSend({
+    type: 'boothDisplaySettings',
+    showTimecode: ws.boothTimecodeEnabled,
+    streamerStartPositionRatio: ws.streamerStartPositionRatio,
+    streamerHitPositionRatio: ws.streamerHitPositionRatio,
+    frameRate: currentProject?.settings?.frameRate || '25',
+    startFrameOffset: getProjectStartFrameOffset(),
+  });
 }
 
 function updateCompactPlaybackButtons() {
@@ -2279,6 +2419,8 @@ function renderRuler() {
 }
 
 function formatTimeLabel(t, iv) {
+  const frame = secondsToFrames(t);
+  if (iv >= 1) return framesToTC(frame);
   if (iv < 1) {
     const ms = Math.round((t % 1) * 100), s = Math.floor(t) % 60, m = Math.floor(t / 60) % 60, h = Math.floor(t / 3600);
     if (h > 0) return `${h}:${p2(m)}:${p2(s)}.${String(ms).padStart(2,'0')}`;
@@ -2389,7 +2531,7 @@ function seekToViewX(px) {
   updatePlayheadPosition(t);
   const tc = secondsToTC(t);
   els.infoTimecode.textContent      = tc;
-  els.transportTimecode.textContent = tc;
+  setLiveTimecode(els.transportTimecode, tc);
   if (isPlaying) syncNativeGuidePlayback(t, true).catch(() => {});
 }
 
@@ -2434,7 +2576,7 @@ function unloadVideoPlayer() {
   els.videoPlayer.classList.add('hidden');
   els.videoPlaceholder.classList.remove('hidden');
   els.infoTimecode.textContent      = '--:--:--:--';
-  els.transportTimecode.textContent = '00:00:00:00';
+  setControlText(els.transportTimecode, '00:00:00:00');
   els.btnPlay.disabled    = true;
   els.btnStop.disabled    = true;
   els.btnMarkIn.disabled  = true;
@@ -2446,13 +2588,24 @@ function onVideoTimeUpdate() {
   const t  = els.videoPlayer.currentTime;
   const tc = secondsToTC(t);
   els.infoTimecode.textContent      = tc;
-  els.transportTimecode.textContent = tc;
+  setLiveTimecode(els.transportTimecode, tc);
   updatePlayheadPosition(t);
   // Loop enforcement: advance to next pass when Out point is reached.
   // Only fires during active playing states — not during COUNTDOWN (video is paused).
   if ((transportState === 'PREP_PASS' || transportState === 'TAKE_PASS') &&
       regionInFrames !== null && regionOutFrames !== null) {
     if (secondsToFrames(t) >= regionOutFrames) _handleLoopBoundary();
+  }
+  if (syncEditorPlaybackActive &&
+      syncEditorState &&
+      transportState === 'PREVIEWING' &&
+      regionOutFrames !== null &&
+      secondsToFrames(t) >= regionOutFrames) {
+    syncEditorPlaybackActive = false;
+    handleTransportStop();
+    setSyncEditorStatus('Editor playback stopped.');
+    updateSyncEditorTransportState();
+    return;
   }
   if (transportState === 'RECORDING_TAKE' &&
       _nativeLoopTakeContext &&
@@ -2466,6 +2619,8 @@ function onVideoTimeUpdate() {
 }
 
 function onVideoEnded() {
+  syncEditorPlaybackActive = false;
+  updateSyncEditorTransportState();
   if ((transportState === 'PREP_PASS' || transportState === 'TAKE_PASS') &&
       regionInFrames !== null && regionOutFrames !== null) {
     _handleLoopBoundary();
@@ -2539,6 +2694,8 @@ function handleTransportStop() {
 
 function stopPlayback() {
   transportActionGeneration++;
+  syncEditorPlaybackActive = false;
+  updateSyncEditorTransportState();
   if (!els.videoPlayer.src) return;
   if (transportState === 'PENDING_RECORDING' && pendingCueRecording) {
     window.api.audioEngine.stopRecording().catch(() => {});
@@ -2589,6 +2746,7 @@ function setPlaybackState(playing) {
   els.playIcon.textContent  = '▶';
   els.playLabel.textContent = 'Play';
   els.btnPlay.classList.toggle('active', playing);
+  updateSyncEditorTransportState();
   playing ? startPlayheadRaf() : stopPlayheadRaf();
 }
 
@@ -3122,23 +3280,28 @@ function markOut() {
   updateLoopButton();
 }
 
+function getVideoDurationFrames() {
+  const duration = Number(els.videoPlayer?.duration);
+  return Number.isFinite(duration) && duration > 0 ? secondsToFrames(duration) : null;
+}
+
 function updateRegionPanelUI() {
   if (regionInFrames !== null) {
-    els.regionInTc.textContent       = framesToTC(regionInFrames);
+    if (document.activeElement !== els.regionInTc) setControlText(els.regionInTc, framesToTC(regionInFrames));
     els.regionInFramesEl.textContent = `${regionInFrames} f`;
     els.btnMarkIn.classList.add('btn-mark-in-active');
   } else {
-    els.regionInTc.textContent       = '—';
+    setControlText(els.regionInTc, '—');
     els.regionInFramesEl.textContent = '—';
     els.btnMarkIn.classList.remove('btn-mark-in-active');
   }
   els.btnStreamerTarget.classList.toggle('btn-streamer-active', getActiveStreamerTargetFrames().length > 0);
   if (regionOutFrames !== null) {
-    els.regionOutTc.textContent       = framesToTC(regionOutFrames);
+    if (document.activeElement !== els.regionOutTc) setControlText(els.regionOutTc, framesToTC(regionOutFrames));
     els.regionOutFramesEl.textContent = `${regionOutFrames} f`;
     els.btnMarkOut.classList.add('btn-mark-out-active');
   } else {
-    els.regionOutTc.textContent       = '—';
+    setControlText(els.regionOutTc, '—');
     els.regionOutFramesEl.textContent = '—';
     els.btnMarkOut.classList.remove('btn-mark-out-active');
   }
@@ -3151,6 +3314,130 @@ function updateRegionPanelUI() {
   const hasRegion = regionInFrames !== null && regionOutFrames !== null && regionOutFrames > regionInFrames;
   els.btnZoomSelection.disabled = !hasRegion || !peakData;
   els.btnStreamerTarget.disabled = !hasRegion;
+}
+
+function commitRegionTimecode(kind, rawValue) {
+  if (!currentProject) return false;
+  const value = String(rawValue || '').trim();
+  if (!value || value === '—' || value === '-') {
+    updateRegionPanelUI();
+    return false;
+  }
+  const frame = timecodeToMediaFrames(value);
+  if (frame === null) {
+    setStatusWarn('Enter timecode as HH:MM:SS:FF.');
+    updateRegionPanelUI();
+    return false;
+  }
+  if (frame < 0) {
+    setStatusWarn('Timecode is before the project start TC.');
+    updateRegionPanelUI();
+    return false;
+  }
+  const durationFrames = getVideoDurationFrames();
+  const clampedFrame = durationFrames === null ? Math.round(frame) : Math.max(0, Math.min(durationFrames, Math.round(frame)));
+  if (kind === 'in') {
+    const previousInFrames = regionInFrames;
+    if (previousInFrames !== null) {
+      regionStreamerTargetFrames = shiftStreamerTargetFrames(regionStreamerTargetFrames, clampedFrame - previousInFrames);
+    }
+    regionInFrames = clampedFrame;
+    if (regionOutFrames !== null && regionOutFrames <= regionInFrames) regionOutFrames = null;
+  } else {
+    if (regionInFrames !== null && clampedFrame <= regionInFrames) {
+      setStatusWarn('Mark Out must be after Mark In.');
+      updateRegionPanelUI();
+      return false;
+    }
+    regionOutFrames = clampedFrame;
+  }
+  regionStreamerTargetFrames = normalizeStreamerTargetFrames(
+    regionStreamerTargetFrames
+      .map(frameValue => clampStreamerTargetFrames(frameValue))
+      .filter(frameValue => frameValue !== null)
+  );
+  updateRegionPanelUI();
+  updateRegionHighlight();
+  updateCreateCueButton();
+  updateLoopButton();
+  setStatusInfo(`Mark ${kind === 'in' ? 'In' : 'Out'}: ${framesToTC(clampedFrame)} (frame ${clampedFrame})`);
+  return true;
+}
+
+function commitScrubTimecode(rawValue) {
+  if (!currentProject || els.videoPlayer.readyState < 1) {
+    setLiveTimecode(els.transportTimecode, secondsToTC(0));
+    return false;
+  }
+  const frame = timecodeToMediaFrames(rawValue);
+  if (frame === null) {
+    setStatusWarn('Enter timecode as HH:MM:SS:FF.');
+    setLiveTimecode(els.transportTimecode, secondsToTC(els.videoPlayer.currentTime || 0));
+    return false;
+  }
+  if (frame < 0) {
+    setStatusWarn('Timecode is before the project start TC.');
+    setLiveTimecode(els.transportTimecode, secondsToTC(els.videoPlayer.currentTime || 0));
+    return false;
+  }
+  const durationFrames = getVideoDurationFrames();
+  const clampedFrame = durationFrames === null ? Math.round(frame) : Math.max(0, Math.min(durationFrames, Math.round(frame)));
+  const time = framesToSeconds(clampedFrame);
+  els.videoPlayer.currentTime = time;
+  updatePlayheadPosition(time);
+  const tc = framesToTC(clampedFrame);
+  els.infoTimecode.textContent = tc;
+  setControlText(els.transportTimecode, tc);
+  if (isPlaying) syncNativeGuidePlayback(time, true).catch(() => {});
+  setStatusInfo(`Scrubbed to ${tc} (frame ${clampedFrame}).`);
+  return true;
+}
+
+async function commitProjectStartTimecode(rawValue) {
+  if (!currentProject) {
+    setControlText(els.settingsStartTimecode, '00:00:00:00');
+    return false;
+  }
+  const normalized = normalizeTimecodeValue(rawValue);
+  if (!normalized) {
+    setStatusWarn('Enter Start TC as HH:MM:SS:FF.');
+    setControlText(els.settingsStartTimecode, frameNumberToTC(getProjectStartFrameOffset()));
+    return false;
+  }
+  const startFrameOffset = timecodeToAbsoluteFrames(normalized);
+  const hasEquivalentStartTc = currentProject.settings?.startTimecode === normalized ||
+    (!currentProject.settings?.startTimecode && startFrameOffset === 0);
+  if (hasEquivalentStartTc && getProjectStartFrameOffset() === startFrameOffset) {
+    setControlText(els.settingsStartTimecode, normalized);
+    return false;
+  }
+  const result = await window.api.project.updateSettings({
+    startTimecode: normalized,
+    startFrameOffset,
+  });
+  if (!result?.success) {
+    setStatusError(`Start TC update failed: ${result?.error || 'Unknown error'}`);
+    setControlText(els.settingsStartTimecode, frameNumberToTC(getProjectStartFrameOffset()));
+    return false;
+  }
+  currentProject = result.project;
+  applySettingsToUI(currentProject.settings, currentProject.cues);
+  els.infoUpdatedAt.textContent = formatDate(currentProject.updatedAt);
+  updateRegionPanelUI();
+  updateRegionHighlight();
+  renderCueList();
+  if (selectedCueId) {
+    const cue = currentProject.cues.find(c => c.cueId === selectedCueId);
+    if (cue) showCueDetail(cue);
+  }
+  renderRuler();
+  const tc = secondsToTC(els.videoPlayer.currentTime || 0);
+  els.infoTimecode.textContent = tc;
+  setLiveTimecode(els.transportTimecode, tc);
+  sendBoothDisplaySettings();
+  markUnsaved();
+  setStatusOk(`Project start TC set to ${normalized}.`);
+  return true;
 }
 
 function getActiveStreamerTargetFrames() {
@@ -4627,6 +4914,7 @@ function renderSyncEditor() {
   renderSyncEditorRuler(timelineDuration);
   renderSyncEditorMainLane(timelineDuration, take);
   renderSyncEditorSourceLanes(timelineDuration, cue.cueId, take);
+  updateSyncEditorTransportState();
 }
 
 function showSyncEditor(takeId, mode = 'sync') {
@@ -4665,10 +4953,12 @@ function showSyncEditor(takeId, mode = 'sync') {
 
 function hideSyncEditor() {
   if (!syncEditorState) return;
+  if (syncEditorPlaybackActive) stopSyncEditorAudition();
   stopReviewPlayback();
   syncEditorDrag = null;
   syncEditorState = null;
   els.modalSyncEditor?.classList.add('hidden');
+  updateSyncEditorTransportState();
 }
 
 function setSyncEditorMode(mode) {
@@ -4925,6 +5215,91 @@ async function syncEditorReviewPlayback(timelineSeconds) {
   reviewAudio.muted = !isTakesTrackAudible();
   if (Math.abs((reviewAudio.currentTime || 0) - context.offset) > 0.12) reviewAudio.currentTime = context.offset;
   if (reviewAudio.paused) await reviewAudio.play();
+}
+
+function updateSyncEditorTransportState() {
+  const editorOpen = !!syncEditorState && !els.modalSyncEditor?.classList.contains('hidden');
+  const active = editorOpen && syncEditorPlaybackActive && isPlaying && transportState === 'PREVIEWING';
+  if (els.btnSyncEditorPlay) {
+    els.btnSyncEditorPlay.classList.toggle('active', active);
+    els.btnSyncEditorPlay.textContent = active ? 'Playing' : 'Play Editor';
+    els.btnSyncEditorPlay.disabled = !editorOpen || !currentProject || els.videoPlayer.readyState < 1;
+  }
+  if (els.btnSyncEditorStop) {
+    els.btnSyncEditorStop.disabled = !editorOpen || !active;
+  }
+}
+
+function ensureSyncEditorAuditionTarget() {
+  if (!syncEditorState) return false;
+  if (syncEditorState.activeAudition) return true;
+  const { take } = editorCueAndTake();
+  if (!take) return false;
+  if (syncEditorState.mode === 'comp' && syncEditorState.segments.length) {
+    syncEditorState.activeAudition = { type: 'main' };
+    return true;
+  }
+  const firstTrack = getEditorTakeTracks(take)[0];
+  if (!firstTrack) return false;
+  syncEditorState.activeAudition = {
+    type: 'source',
+    takeId: take.takeId,
+    laneId: firstTrack.laneId || 'mic1',
+  };
+  return true;
+}
+
+function playSyncEditorAudition() {
+  if (!syncEditorState || syncEditorState.busy) return;
+  const { cue } = editorCueAndTake();
+  if (!cue) {
+    setSyncEditorStatus('No cue is available for editor playback.', 'error');
+    return;
+  }
+  if (!currentProject || els.videoPlayer.readyState < 1) {
+    setSyncEditorStatus('Load video before auditioning the editor.', 'error');
+    updateSyncEditorTransportState();
+    return;
+  }
+  if (!ensureSyncEditorAuditionTarget()) {
+    setSyncEditorStatus('Choose a source lane to audition.', 'error');
+    updateSyncEditorTransportState();
+    return;
+  }
+  if (isPlaying) handleTransportStop();
+  regionInFrames = cue.inFrames;
+  regionOutFrames = cue.outFrames;
+  regionStreamerTargetFrames = getCueStreamerTargetFrames(cue);
+  playbackStartPosition = framesToSeconds(cue.inFrames);
+  syncEditorPlaybackActive = true;
+  _setTransportState('PREVIEWING');
+  const char = (currentProject.characters || []).find(item => item.characterId === cue.characterId);
+  boothSend(getCueBoothPayload(cue, char?.name || ''));
+  updateRegionPanelUI();
+  updateRegionHighlight();
+  renderSyncEditor();
+  setSyncEditorStatus('Auditioning editor changes.');
+  startSyncedVideoAt(playbackStartPosition, ['PREVIEWING'])
+    .then(started => {
+      if (!started) {
+        syncEditorPlaybackActive = false;
+        updateSyncEditorTransportState();
+      }
+    })
+    .catch(err => {
+      syncEditorPlaybackActive = false;
+      setSyncEditorStatus('Editor playback failed: ' + err.message, 'error');
+      updateSyncEditorTransportState();
+    });
+  updateSyncEditorTransportState();
+}
+
+function stopSyncEditorAudition() {
+  if (!syncEditorPlaybackActive && transportState !== 'PREVIEWING') return;
+  syncEditorPlaybackActive = false;
+  handleTransportStop();
+  setSyncEditorStatus('Editor playback stopped.');
+  updateSyncEditorTransportState();
 }
 
 /**
@@ -5380,10 +5755,9 @@ function showCueDetail(cue) {
   els.btnCueStatus.classList.toggle('completed', completed);
   els.btnCueStatus.title = completed ? 'Click to mark as Open' : 'Click to mark as Completed';
 
-  // Timing (display only — not editable)
   const durF = cue.outFrames - cue.inFrames;
-  els.cueDetailIn.textContent  = framesToTC(cue.inFrames);
-  els.cueDetailOut.textContent = framesToTC(cue.outFrames);
+  setControlText(els.cueDetailIn, framesToTC(cue.inFrames));
+  setControlText(els.cueDetailOut, framesToTC(cue.outFrames));
   els.cueDetailDur.textContent = `${durF} f`;
   renderCueOverlapDetail(cue);
 
@@ -5443,11 +5817,46 @@ async function toggleCueStatus() {
 // CUE EDITS + DELETE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function readCueTimingPatchFromDetail(cue) {
+  const inValue = getControlText(els.cueDetailIn).trim();
+  const outValue = getControlText(els.cueDetailOut).trim();
+  const nextInFrames = timecodeToMediaFrames(inValue);
+  const nextOutFrames = timecodeToMediaFrames(outValue);
+  if (nextInFrames === null || nextOutFrames === null) {
+    return { error: 'Enter cue In and Out as HH:MM:SS:FF.' };
+  }
+  if (nextInFrames < 0 || nextOutFrames < 0) {
+    return { error: 'Cue timecode cannot be before the project start TC.' };
+  }
+  const inFrames = Math.round(nextInFrames);
+  const outFrames = Math.round(nextOutFrames);
+  if (outFrames <= inFrames) {
+    return { error: 'Cue Out must be after Cue In.' };
+  }
+  const durationFrames = getVideoDurationFrames();
+  if (durationFrames !== null && (inFrames > durationFrames || outFrames > durationFrames)) {
+    return { error: 'Cue In/Out cannot be beyond the loaded video duration.' };
+  }
+  const patch = {};
+  if (inFrames !== cue.inFrames) patch.inFrames = inFrames;
+  if (outFrames !== cue.outFrames) patch.outFrames = outFrames;
+  return { patch };
+}
+
 async function saveCueEdits() {
   if (!selectedCueId || !currentProject) return;
+  const cue = currentProject.cues.find(c => c.cueId === selectedCueId);
+  if (!cue) return;
+  const timing = readCueTimingPatchFromDetail(cue);
+  if (timing.error) {
+    setStatusWarn(timing.error);
+    showCueDetail(cue);
+    return;
+  }
   const patch = {
     dialogue: els.cueDetailDialogue.value,
     notes:    els.cueDetailNotes.value,
+    ...timing.patch,
     // character not editable post-creation in this phase
   };
   const result = await window.api.cue.updateCue(selectedCueId, patch);
@@ -5457,7 +5866,15 @@ async function saveCueEdits() {
   renderCueList();
 
   const updated = currentProject.cues.find(c => c.cueId === selectedCueId);
-  if (updated) showCueDetail(updated);
+  if (updated) {
+    regionInFrames = updated.inFrames;
+    regionOutFrames = updated.outFrames;
+    regionStreamerTargetFrames = getCueStreamerTargetFrames(updated);
+    updateRegionPanelUI();
+    updateRegionHighlight();
+    updateLoopButton();
+    showCueDetail(updated);
+  }
 
   // Refresh overlay if dialogue changed
   updateDialogueOverlay();
@@ -5659,6 +6076,7 @@ function applySettingsToUI(settings, cues) {
   if (!settings) { clearSettingsPanel(); return; }
   const hasCues = Array.isArray(cues) && cues.length > 0;
   els.settingsFramerate.textContent  = settings.frameRate  ? formatFrameRate(settings.frameRate) : '—';
+  setControlText(els.settingsStartTimecode, frameNumberToTC(getProjectStartFrameOffset()));
   els.settingsSamplerate.textContent = settings.sampleRate ? `${settings.sampleRate} Hz` : '—';
   els.settingsBitdepth.textContent   = settings.bitDepth   ? `${settings.bitDepth}-bit`  : '—';
   hasCues ? els.framerateLockedRow.classList.remove('hidden')
@@ -5667,6 +6085,7 @@ function applySettingsToUI(settings, cues) {
 
 function clearSettingsPanel() {
   els.settingsFramerate.textContent  = '—';
+  setControlText(els.settingsStartTimecode, '00:00:00:00');
   els.settingsSamplerate.textContent = '—';
   els.settingsBitdepth.textContent   = '—';
   els.framerateLockedRow.classList.add('hidden');
@@ -6638,6 +7057,48 @@ els.btnCueStatus.addEventListener('click', toggleCueStatus);
 // Cue detail
 els.btnSaveCue.addEventListener('click',   saveCueEdits);
 els.btnDeleteCue.addEventListener('click', deleteCue);
+
+function resetTimecodeInput(input, value) {
+  setControlText(input, value);
+  input?.blur?.();
+}
+
+function bindTimecodeInput(input, commit, resetValue) {
+  input?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      input.dataset.skipNextBlurCommit = 'true';
+      Promise.resolve(commit(getControlText(input))).catch(err => setStatusError(err.message));
+      input.blur();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      input.dataset.skipNextBlurCommit = 'true';
+      resetTimecodeInput(input, resetValue());
+    }
+  });
+  input?.addEventListener('blur', () => {
+    if (input.dataset.skipNextBlurCommit === 'true') {
+      delete input.dataset.skipNextBlurCommit;
+      return;
+    }
+    Promise.resolve(commit(getControlText(input))).catch(err => setStatusError(err.message));
+  });
+}
+
+bindTimecodeInput(els.transportTimecode, value => commitScrubTimecode(value), () => secondsToTC(els.videoPlayer.currentTime || 0));
+bindTimecodeInput(els.regionInTc, value => commitRegionTimecode('in', value), () => regionInFrames === null ? '—' : framesToTC(regionInFrames));
+bindTimecodeInput(els.regionOutTc, value => commitRegionTimecode('out', value), () => regionOutFrames === null ? '—' : framesToTC(regionOutFrames));
+bindTimecodeInput(els.cueDetailIn, () => saveCueEdits(), () => {
+  const cue = getCueById(selectedCueId);
+  return cue ? framesToTC(cue.inFrames) : '—';
+});
+bindTimecodeInput(els.cueDetailOut, () => saveCueEdits(), () => {
+  const cue = getCueById(selectedCueId);
+  return cue ? framesToTC(cue.outFrames) : '—';
+});
+bindTimecodeInput(els.settingsStartTimecode, value => commitProjectStartTimecode(value), () => frameNumberToTC(getProjectStartFrameOffset()));
+
 els.cueOverlapList?.addEventListener('click', (event) => {
   const row = event.target.closest('.cue-overlap-row');
   if (!row?.dataset.cueId) return;
@@ -6694,11 +7155,14 @@ els.btnCompMode?.addEventListener('click', () => setSyncEditorMode('comp'));
 els.btnSyncEditorClose?.addEventListener('click', hideSyncEditor);
 els.btnSyncEditorCloseFooter?.addEventListener('click', hideSyncEditor);
 els.btnSyncEditorSave?.addEventListener('click', () => saveSyncEditor());
+els.btnSyncEditorPlay?.addEventListener('click', playSyncEditorAudition);
+els.btnSyncEditorStop?.addEventListener('click', stopSyncEditorAudition);
 els.btnSyncEditorMainSolo?.addEventListener('click', () => {
   if (!syncEditorState) return;
   const active = syncEditorState.activeAudition?.type === 'main';
   syncEditorState.activeAudition = active ? null : { type: 'main' };
   stopReviewPlayback();
+  if (syncEditorPlaybackActive) syncEditorReviewPlayback(els.videoPlayer.currentTime || 0).catch(() => {});
   renderSyncEditor();
 });
 els.btnSyncEditorReveal?.addEventListener('click', async () => {
@@ -6778,6 +7242,7 @@ els.modalSyncEditor?.addEventListener('click', event => {
       laneId: target.dataset.laneId,
     };
     stopReviewPlayback();
+    if (syncEditorPlaybackActive) syncEditorReviewPlayback(els.videoPlayer.currentTime || 0).catch(() => {});
     renderSyncEditor();
   }
   if (target.dataset.editorAction === 'select-segment') {
@@ -6840,11 +7305,25 @@ els.settingBoothTcEnabled.addEventListener('change', () => {
   updateCompactPlaybackButtons();
   saveWorkspaceSettings();
   markUnsaved();
-  boothSend({
-    type: 'boothDisplaySettings',
-    showTimecode: ws.boothTimecodeEnabled,
-    frameRate: currentProject?.settings?.frameRate || '25',
-  });
+  sendBoothDisplaySettings();
+});
+
+els.settingStreamerStartPosition?.addEventListener('input', () => {
+  ws.streamerStartPositionRatio = clampStreamerStartPositionRatio(els.settingStreamerStartPosition.value);
+  normalizeStreamerScreenPositions();
+  syncStreamerPositionControls();
+  saveWorkspaceSettings();
+  markUnsaved();
+  sendBoothDisplaySettings();
+});
+
+els.settingStreamerHitPosition?.addEventListener('input', () => {
+  ws.streamerHitPositionRatio = clampStreamerHitPositionRatio(els.settingStreamerHitPosition.value);
+  normalizeStreamerScreenPositions();
+  syncStreamerPositionControls();
+  saveWorkspaceSettings();
+  markUnsaved();
+  sendBoothDisplaySettings();
 });
 
 // Playback volume slider
@@ -6949,7 +7428,10 @@ els.dxOverlayInline?.addEventListener('click', e => {
     overlayColor: ws.dialogueOverlayColor,
     overlayFontSize: ws.dialogueOverlayFontSize,
     showTimecode: ws.boothTimecodeEnabled,
+    streamerStartPositionRatio: ws.streamerStartPositionRatio,
+    streamerHitPositionRatio: ws.streamerHitPositionRatio,
     frameRate: currentProject?.settings?.frameRate || '25',
+    startFrameOffset: getProjectStartFrameOffset(),
   });
 });
 
@@ -7045,7 +7527,10 @@ els.overlayColorPicker.addEventListener('click', (e) => {
     overlayColor: ws.dialogueOverlayColor,
     overlayFontSize: ws.dialogueOverlayFontSize,
     showTimecode: ws.boothTimecodeEnabled,
+    streamerStartPositionRatio: ws.streamerStartPositionRatio,
+    streamerHitPositionRatio: ws.streamerHitPositionRatio,
     frameRate: currentProject?.settings?.frameRate || '25',
+    startFrameOffset: getProjectStartFrameOffset(),
   });
 });
 els.overlayFontSize.addEventListener('click', (e) => {
@@ -7061,7 +7546,10 @@ els.overlayFontSize.addEventListener('click', (e) => {
     overlayColor: ws.dialogueOverlayColor,
     overlayFontSize: ws.dialogueOverlayFontSize,
     showTimecode: ws.boothTimecodeEnabled,
+    streamerStartPositionRatio: ws.streamerStartPositionRatio,
+    streamerHitPositionRatio: ws.streamerHitPositionRatio,
     frameRate: currentProject?.settings?.frameRate || '25',
+    startFrameOffset: getProjectStartFrameOffset(),
   });
 });
 
@@ -7625,7 +8113,10 @@ function hydrateBoothState() {
     overlayColor:    ws.dialogueOverlayColor,
     overlayFontSize: ws.dialogueOverlayFontSize,
     showTimecode:    ws.boothTimecodeEnabled,
+    streamerStartPositionRatio: ws.streamerStartPositionRatio,
+    streamerHitPositionRatio: ws.streamerHitPositionRatio,
     frameRate:       currentProject?.settings?.frameRate || '25',
+    startFrameOffset: getProjectStartFrameOffset(),
   });
 
   // Ensure booth video is paused on open (not playing any stale state)

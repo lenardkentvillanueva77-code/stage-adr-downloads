@@ -90,7 +90,9 @@
           <div class="preroll-dot" id="preroll-dot-2"></div>
           <div class="preroll-dot" id="preroll-dot-3"></div>
         </div>
-        <div class="timecode-display video-timecode" id="transport-timecode">00:00:00:00</div>
+        <input type="text" class="timecode-display video-timecode timecode-input" id="transport-timecode"
+          value="00:00:00:00" inputmode="numeric" autocomplete="off" spellcheck="false"
+          aria-label="Scrub timecode" title="Type or paste a timecode, then press Enter" />
       </div>
 
       <!-- Video info strip -->
@@ -263,6 +265,12 @@
         </div>
         <div class="panel-body" style="display:none">
           <div class="field-row"><span class="field-label">Frame Rate</span><span class="field-value" id="settings-framerate">—</span></div>
+          <div class="field-row">
+            <span class="field-label">Start TC</span>
+            <input type="text" class="field-value field-mono timecode-field-input" id="settings-start-timecode"
+              value="00:00:00:00" inputmode="numeric" autocomplete="off" spellcheck="false"
+              aria-label="Project start timecode" title="Display/export timecode at video frame 0" />
+          </div>
           <div class="field-row"><span class="field-label">Sample Rate</span><span class="field-value" id="settings-samplerate">—</span></div>
           <div class="field-row"><span class="field-label">Bit Depth</span><span class="field-value" id="settings-bitdepth">—</span></div>
           <div class="field-row lock-indicator hidden" id="framerate-lock-row">
@@ -361,9 +369,19 @@
           <span class="panel-chevron">▸</span>
         </div>
         <div class="panel-body" style="display:none">
-          <div class="field-row"><span class="field-label">Mark In</span><span class="field-value field-mono" id="region-in-tc">—</span></div>
+          <div class="field-row">
+            <span class="field-label">Mark In</span>
+            <input type="text" class="field-value field-mono timecode-field-input" id="region-in-tc"
+              value="—" inputmode="numeric" autocomplete="off" spellcheck="false"
+              aria-label="Region mark in timecode" title="Type or paste a timecode for Mark In" />
+          </div>
           <div class="field-row"><span class="field-label">Mark In (f)</span><span class="field-value field-mono small" id="region-in-frames">—</span></div>
-          <div class="field-row"><span class="field-label">Mark Out</span><span class="field-value field-mono" id="region-out-tc">—</span></div>
+          <div class="field-row">
+            <span class="field-label">Mark Out</span>
+            <input type="text" class="field-value field-mono timecode-field-input" id="region-out-tc"
+              value="—" inputmode="numeric" autocomplete="off" spellcheck="false"
+              aria-label="Region mark out timecode" title="Type or paste a timecode for Mark Out" />
+          </div>
           <div class="field-row"><span class="field-label">Mark Out (f)</span><span class="field-value field-mono small" id="region-out-frames">—</span></div>
           <div class="field-row"><span class="field-label">Duration</span><span class="field-value field-mono" id="region-duration">—</span></div>
           <div class="field-row"><span class="field-label">Loop</span><span class="field-value" id="region-loop-status">Off</span></div>
@@ -422,6 +440,26 @@
               <input type="checkbox" id="setting-booth-tc-enabled" />
               <span class="toggle-track"><span class="toggle-thumb"></span></span>
             </label>
+          </div>
+
+          <div class="field-row setting-row">
+            <span class="field-label">Travel Start</span>
+            <div class="slider-wrap">
+              <input type="range" class="vol-slider" id="setting-streamer-start-position"
+                min="0.02" max="0.85" step="0.01" value="0.12"
+                title="Where the streamer begins on the booth screen" />
+              <span class="vol-pct" id="setting-streamer-start-position-pct">12%</span>
+            </div>
+          </div>
+
+          <div class="field-row setting-row">
+            <span class="field-label">Landing Point</span>
+            <div class="slider-wrap">
+              <input type="range" class="vol-slider" id="setting-streamer-hit-position"
+                min="0.30" max="0.95" step="0.01" value="0.72"
+                title="Where the streamer lands on the booth screen" />
+              <span class="vol-pct" id="setting-streamer-hit-position-pct">72%</span>
+            </div>
           </div>
 
           <div class="overlay-sub-settings" id="overlay-sub-settings">
@@ -483,16 +521,19 @@
           <button class="btn btn-xs btn-danger" id="btn-delete-cue">Delete</button>
         </div>
         <div class="cue-detail-body">
-          <!-- Timing row (display only) -->
           <div class="cue-detail-row cue-timing-row">
             <span class="cue-timing-item">
-              <span class="cue-timing-label">In</span>
-              <span class="cue-timing-value field-mono" id="cue-detail-in">—</span>
+              <label class="cue-timing-label" for="cue-detail-in">In</label>
+              <input type="text" class="cue-timing-value field-mono timecode-field-input" id="cue-detail-in"
+                value="—" inputmode="numeric" autocomplete="off" spellcheck="false"
+                aria-label="Cue in timecode" title="Type or paste a timecode for this cue In point" />
             </span>
             <span class="cue-timing-sep">→</span>
             <span class="cue-timing-item">
-              <span class="cue-timing-label">Out</span>
-              <span class="cue-timing-value field-mono" id="cue-detail-out">—</span>
+              <label class="cue-timing-label" for="cue-detail-out">Out</label>
+              <input type="text" class="cue-timing-value field-mono timecode-field-input" id="cue-detail-out"
+                value="—" inputmode="numeric" autocomplete="off" spellcheck="false"
+                aria-label="Cue out timecode" title="Type or paste a timecode for this cue Out point" />
             </span>
             <span class="cue-timing-item">
               <span class="cue-timing-label">Dur</span>
@@ -844,6 +885,8 @@
       <div class="sync-editor-footer">
         <span class="sync-editor-status" id="sync-editor-status">Ready</span>
         <div class="sync-editor-footer-actions">
+          <button class="btn btn-ghost" id="btn-sync-editor-play">Play Editor</button>
+          <button class="btn btn-ghost" id="btn-sync-editor-stop">Stop</button>
           <button class="btn btn-ghost" id="btn-sync-editor-reveal">Reveal Source</button>
           <button class="btn btn-ghost" id="btn-sync-editor-cancel">Close</button>
           <button class="btn btn-primary" id="btn-sync-editor-save">Save Sync</button>

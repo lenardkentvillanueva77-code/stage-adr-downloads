@@ -4,7 +4,12 @@ const fs = require('fs');
 const path = require('path');
 
 const { buildAdrSessionRows } = require('./adrSessionReport');
-const { framesToSeconds, framesToTimecode, secondsToFrames } = require('../../core/timecode');
+const {
+  framesToProjectTimecode,
+  framesToSeconds,
+  getProjectStartFrameOffset,
+  secondsToFrames,
+} = require('../../core/timecode');
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const OUTPUT_BIT_DEPTH = 24;
@@ -282,6 +287,7 @@ function getFilmDurationSeconds(project, placements, frameRate) {
 
 function buildPlacements(project, options = {}) {
   const frameRate = project.settings?.frameRate || project.video?.frameRate || '25';
+  const startFrameOffset = getProjectStartFrameOffset(project, frameRate);
   const { cues, characters, actors } = buildLookup(project);
   const placements = [];
   const missingFiles = [];
@@ -317,9 +323,9 @@ function buildPlacements(project, options = {}) {
         laneName,
         timelineStartSeconds,
         timelineStartFrames,
-        timelineStartTimecode: framesToTimecode(timelineStartFrames, frameRate),
-        cueInTimecode: framesToTimecode(cue.inFrames || 0, frameRate),
-        cueOutTimecode: framesToTimecode(cue.outFrames || 0, frameRate),
+        timelineStartTimecode: framesToProjectTimecode(timelineStartFrames, frameRate, startFrameOffset),
+        cueInTimecode: framesToProjectTimecode(cue.inFrames || 0, frameRate, startFrameOffset),
+        cueOutTimecode: framesToProjectTimecode(cue.outFrames || 0, frameRate, startFrameOffset),
       };
 
       if (!sourcePath || !fs.existsSync(sourcePath)) {
@@ -485,7 +491,7 @@ function writeSummary(summaryPath, manifest) {
     `Package folder:       ${manifest.packageRoot}`,
     ``,
     `SYNC AND FORMAT`,
-    `Stem start:           00:00:00:00 / film zero`,
+    `Stem start:           ${manifest.project.startTimecode || '00:00:00:00'} / project start TC`,
     `Placement rule:       Cue In TC + recording offset`,
     `Recording offset:     ${manifest.recordingOffsetMs} ms`,
     `Film duration:        ${formatSeconds(manifest.filmDurationSeconds)} seconds`,
@@ -691,6 +697,8 @@ function exportGoodTakesPackage({ project, destinationRoot, characterId = null }
       projectId: project.projectId,
       projectName: project.projectName,
       filmTitle: project.filmTitle,
+      startTimecode: project.settings?.startTimecode || framesToProjectTimecode(0, frameRate, getProjectStartFrameOffset(project, frameRate)),
+      startFrameOffset: getProjectStartFrameOffset(project, frameRate),
     },
     exportScope: character
       ? { type: 'character', characterId, characterName: character.name || '' }
@@ -922,6 +930,8 @@ function exportTimelineTakesPackage({ project, destinationRoot, characterId = nu
       projectId: project.projectId,
       projectName: project.projectName,
       filmTitle: project.filmTitle,
+      startTimecode: project.settings?.startTimecode || framesToProjectTimecode(0, frameRate, getProjectStartFrameOffset(project, frameRate)),
+      startFrameOffset: getProjectStartFrameOffset(project, frameRate),
     },
     exportScope: character
       ? { type: 'character', characterId, characterName: character.name || '' }
