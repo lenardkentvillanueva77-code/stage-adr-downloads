@@ -7,8 +7,9 @@ const path = require('node:path');
 const test = require('node:test');
 
 const { renderCompTake, parseWavFile } = require('../src/services/audio/compTakeRenderer');
-const { updateTake, shiftCueTakeSyncOffsets } = require('../src/core/projectState');
+const { updateTake, shiftCueTakeSyncOffsets, setTakeSelected } = require('../src/core/projectState');
 const { relinkProjectFiles } = require('../src/services/media/relinkProjectFiles');
+const { exportGoodTakesPackage } = require('../src/services/export/goodTakesPackage');
 
 const SAMPLE_RATE = 48000;
 
@@ -102,6 +103,53 @@ test('updateTake changes only the requested take and preserves the input project
   assert.equal(result.project.takes[0].syncEdit.offsetSecs, 0.125);
   assert.equal(result.project.takes[1].syncEdit.offsetSecs, 0);
   assert.notEqual(result.project.updatedAt, 'before');
+});
+
+test('marking another good take keeps earlier good takes selected for later exports', () => {
+  const project = {
+    updatedAt: 'before',
+    cues: [{ cueId: 'cue-1', status: 'open' }],
+    takes: [
+      { takeId: 'take-a', cueId: 'cue-1', rating: 'none', isSelected: true },
+      { takeId: 'take-b', cueId: 'cue-1', rating: 'none', isSelected: false },
+    ],
+  };
+  const result = setTakeSelected(project, 'cue-1', 'take-b', true);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.project.takes.map(take => take.isSelected), [true, true]);
+  assert.deepEqual(project.takes.map(take => take.isSelected), [true, false]);
+});
+
+test('a second good-takes export includes a take marked after the first export', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'post-adr-good-export-'));
+  try {
+    const sourceA = path.join(tempRoot, 'take-a.wav');
+    const sourceB = path.join(tempRoot, 'take-b.wav');
+    writeConstantWav(sourceA, 0.1, 800000);
+    writeConstantWav(sourceB, 0.1, -800000);
+    const base = {
+      projectId: 'project-1',
+      projectName: 'Second Pass',
+      filmTitle: 'Film',
+      settings: { frameRate: '25', startTimecode: '00:00:00:00', startFrameOffset: 0, workspace: { recordingOffsetMs: 0 } },
+      video: { durationSeconds: 0.2 },
+      characters: [{ characterId: 'char-1', name: 'MINA' }],
+      actors: [],
+      cues: [{ cueId: 'cue-1', cueNumber: 'ADR-001', characterId: 'char-1', inFrames: 0, outFrames: 5, status: 'recorded' }],
+      takes: [
+        { takeId: 'take-a', cueId: 'cue-1', takeNumber: 1, filePath: sourceA, durationSecs: 0.1, startOffsetSecs: 0, rating: 'none', isSelected: true, tracks: [] },
+        { takeId: 'take-b', cueId: 'cue-1', takeNumber: 2, filePath: sourceB, durationSecs: 0.1, startOffsetSecs: 0.1, rating: 'none', isSelected: false, tracks: [] },
+      ],
+    };
+
+    const first = exportGoodTakesPackage({ project: base, destinationRoot: tempRoot });
+    assert.equal(first.placements.length, 1);
+    const marked = setTakeSelected(base, 'cue-1', 'take-b', true).project;
+    const second = exportGoodTakesPackage({ project: marked, destinationRoot: tempRoot });
+    assert.deepEqual(second.placements.map(item => item.takeId).sort(), ['take-a', 'take-b']);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test('shiftCueTakeSyncOffsets changes only takes for the edited cue', () => {

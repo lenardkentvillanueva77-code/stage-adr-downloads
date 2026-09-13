@@ -1,6 +1,6 @@
 {
   "name": "stage-post-adr-cue-recorder",
-  "version": "1.3.0-alpha.1",
+  "version": "1.3.0-alpha.2",
   "productName": "Post ADR Pro",
   "description": "Post ADR Pro — ADR spotting, cue management, and export",
   "main": "main.js",
@@ -43,7 +43,7 @@
     ],
     "extraResources": [
       {
-        "from": "native/audio-engine/build-nmake2/PostAdrAudioEngine_artefacts/Debug/PostAdrAudioEngine.exe",
+        "from": "native/audio-engine/bin/PostAdrAudioEngine.exe",
         "to": "native-audio/PostAdrAudioEngine.exe"
       }
     ],

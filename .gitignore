@@ -12,6 +12,7 @@ SP ADR BETA RELEASE/
 native/audio-engine/JUCE/
 native/audio-engine/build/
 native/audio-engine/build-clean/
+native/audio-engine/build-release/
 native/audio-engine/build-msvc/
 native/audio-engine/build-nmake/
 native/audio-engine/build-nmake2/
@@ -22,6 +23,8 @@ native/audio-engine/**/*.obj
 native/audio-engine/**/*.pdb
 native/audio-engine/**/*.ilk
 native/audio-engine/**/*.exe
+!native/audio-engine/bin/
+!native/audio-engine/bin/PostAdrAudioEngine.exe
 
 # Generated media / project session payloads
 *.stageadr

@@ -31,6 +31,9 @@ const {
   exportTimelineTakesPackage,
 } = require('../services/export/goodTakesPackage');
 const { getProject }          = require('./projectHandlers');
+const { buildCueMap }         = require('../services/export/cueMap');
+const { exportCueVideo }      = require('../services/export/cueVideo');
+const { checkFfmpegAvailability } = require('../services/media/ffmpeg');
 
 function safeName(value, fallback) {
   return (value || fallback).replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || fallback;
@@ -242,6 +245,61 @@ function register(ipcMain, getWindow) {
     } catch (err) {
       console.error('[exportHandlers] Good takes package failed:', err);
       return { success: false, error: `Good takes package failed: ${err.message}` };
+    }
+  });
+
+  ipcMain.handle('export:cueMap', async (_event, opts = {}) => {
+    const project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+    const cueIds = Array.isArray(opts.cueIds) ? opts.cueIds.filter(Boolean) : null;
+    const suffix = cueIds?.length ? 'Selected_Cues' : 'All_Cues';
+    const defaultName = `${safeName(project.projectName, 'ADR_Project')}_Cue_Map_${suffix}.json`;
+    const saveResult = await dialog.showSaveDialog(getWindow(), {
+      title: cueIds?.length ? 'Export Selected Cue Map' : 'Export Cue Map',
+      defaultPath: getExportsPath(project) ? path.join(getExportsPath(project), defaultName) : defaultName,
+      filters: [{ name: 'Post ADR Pro Cue Map', extensions: ['json'] }],
+    });
+    if (saveResult.canceled || !saveResult.filePath) return { success: false, error: 'Export cancelled.' };
+    const destPath = saveResult.filePath.toLowerCase().endsWith('.json') ? saveResult.filePath : `${saveResult.filePath}.json`;
+    try {
+      const cueMap = buildCueMap(project, { cueIds });
+      fs.writeFileSync(destPath, Buffer.from(JSON.stringify(cueMap, null, 2), 'utf8'));
+      return { success: true, filePath: destPath, cueCount: cueMap.cues.length };
+    } catch (err) {
+      return { success: false, error: `Cue map export failed: ${err.message}` };
+    }
+  });
+
+  ipcMain.handle('export:cueVideo', async (_event, { cueId } = {}) => {
+    const project = getProject();
+    if (!project) return { success: false, error: 'No project is open.' };
+    const cue = (project.cues || []).find(item => item.cueId === cueId);
+    if (!cue) return { success: false, error: 'Select a cue to export.' };
+    const ffmpeg = checkFfmpegAvailability();
+    if (!ffmpeg.available) return { success: false, error: 'ffmpeg is not available.' };
+    const frameRateText = project.settings?.frameRate || project.video?.frameRate || '25';
+    const frameRate = String(frameRateText).includes('/')
+      ? Number(String(frameRateText).split('/')[0]) / Number(String(frameRateText).split('/')[1])
+      : Number(frameRateText);
+    if (!(frameRate > 0)) return { success: false, error: 'Project frame rate is invalid.' };
+    const defaultName = `${safeName(project.projectName, 'ADR_Project')}_${safeName(cue.cueNumber, 'Cue')}.mp4`;
+    const saveResult = await dialog.showSaveDialog(getWindow(), {
+      title: `Export ${cue.cueNumber || 'Cue'} Video`,
+      defaultPath: getExportsPath(project) ? path.join(getExportsPath(project), defaultName) : defaultName,
+      filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
+    });
+    if (saveResult.canceled || !saveResult.filePath) return { success: false, error: 'Export cancelled.' };
+    const destPath = saveResult.filePath.toLowerCase().endsWith('.mp4') ? saveResult.filePath : `${saveResult.filePath}.mp4`;
+    try {
+      await exportCueVideo({
+        videoPath: project.video?.localPath,
+        startSeconds: cue.inFrames / frameRate,
+        durationSeconds: (cue.outFrames - cue.inFrames) / frameRate,
+        outputPath: destPath,
+      });
+      return { success: true, filePath: destPath, cueNumber: cue.cueNumber };
+    } catch (err) {
+      return { success: false, error: `Cue video export failed: ${err.message}` };
     }
   });
 

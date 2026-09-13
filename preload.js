@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('api', {
     openPath:        (filePath) => ipcRenderer.invoke('project:openPath', { filePath }),
     getCurrent:      ()     => ipcRenderer.invoke('project:getCurrent'),
     relinkFiles:     ()     => ipcRenderer.invoke('project:relinkFiles'),
+    importCueMap:    ()     => ipcRenderer.invoke('project:importCueMap'),
     setVideo:        (meta) => ipcRenderer.invoke('project:setVideo', meta),
     updateSettings:  (settings) => ipcRenderer.invoke('project:updateSettings', settings),
     updateWorkspaceSettings: (workspace, opts = {}) => ipcRenderer.invoke('project:updateWorkspaceSettings', { workspace, ...opts }),
@@ -60,6 +61,7 @@ contextBridge.exposeInMainWorld('api', {
     extract:          () => ipcRenderer.invoke('waveform:extract'),
     load:             () => ipcRenderer.invoke('waveform:load'),
     migrateOnSaveAs:  (opts) => ipcRenderer.invoke('waveform:migrateOnSaveAs', opts),
+    takePeaks:         (opts) => ipcRenderer.invoke('waveform:takePeaks', opts || {}),
   },
 
   // ── Cues & Characters (Phase 1.75) ──────────────────────────────────────────
@@ -157,6 +159,8 @@ contextBridge.exposeInMainWorld('api', {
     remoteCueManifest: () => ipcRenderer.invoke('export:remoteCueManifest'),
     goodTakesPackage: (opts) => ipcRenderer.invoke('export:goodTakesPackage', opts),
     timelineTakesPackage: (opts) => ipcRenderer.invoke('export:timelineTakesPackage', opts),
+    cueMap: (opts) => ipcRenderer.invoke('export:cueMap', opts || {}),
+    cueVideo: (opts) => ipcRenderer.invoke('export:cueVideo', opts || {}),
   },
 
   // ── Dialogs ─────────────────────────────────────────────────────────────────
@@ -185,6 +189,10 @@ contextBridge.exposeInMainWorld('api', {
       exportGoodTakesCharacter: (cb) => ipcRenderer.on('menu:export-good-takes-character', cb),
       exportCsv:     (cb) => ipcRenderer.on('menu:export-csv',      cb),
       exportPdf:     (cb) => ipcRenderer.on('menu:export-pdf',      cb),
+      exportCueMap:  (cb) => ipcRenderer.on('menu:export-cue-map', cb),
+      exportSelectedCueMap: (cb) => ipcRenderer.on('menu:export-selected-cue-map', cb),
+      exportCueVideo: (cb) => ipcRenderer.on('menu:export-cue-video', cb),
+      importCueMap:  (cb) => ipcRenderer.on('menu:import-cue-map', cb),
       returnToStartOnStop: (cb) => ipcRenderer.on('menu:return-to-start-on-stop', (_event, checked) => cb(checked)),
       recordMode:    (cb) => ipcRenderer.on('menu:record-mode',     (_event, mode) => cb(mode)),
       showPlaybackSettings: (cb) => ipcRenderer.on('menu:show-playback-settings', cb),

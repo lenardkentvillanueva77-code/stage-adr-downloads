@@ -29,18 +29,7 @@ function resolveEnginePath() {
     } catch {}
   }
 
-  return path.join(
-    __dirname,
-    '..',
-    '..',
-    '..',
-    'native',
-    'audio-engine',
-    'build-nmake2',
-    'PostAdrAudioEngine_artefacts',
-    'Debug',
-    exeName
-  );
+  return path.join(__dirname, '..', '..', '..', 'native', 'audio-engine', 'bin', exeName);
 }
 
 class AudioEngineClient {

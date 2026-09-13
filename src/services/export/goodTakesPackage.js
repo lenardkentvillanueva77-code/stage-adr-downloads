@@ -759,6 +759,7 @@ function exportGoodTakesPackage({ project, destinationRoot, characterId = null }
     renderedFiles,
     copiedFiles: renderedFiles,
     missingFiles,
+    placements: manifest.placements,
     unsupportedFiles: manifest.unsupportedFiles,
     skippedSelectedRows,
   };
@@ -992,6 +993,7 @@ function exportTimelineTakesPackage({ project, destinationRoot, characterId = nu
     summaryPath,
     renderedFiles,
     copiedFiles: renderedFiles,
+    placements: manifest.placements,
     missingFiles,
     unsupportedFiles: manifest.unsupportedFiles,
     skippedSelectedRows: [],

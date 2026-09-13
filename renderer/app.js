@@ -215,6 +215,7 @@ let activeAuditionLaneId = null;
 let syncEditorState = null;
 let syncEditorDrag = null;
 let syncEditorPlaybackActive = false;
+let syncEditorPeakCache = new Map();
 let reviewAudio = null;
 let reviewAudioTakeId = null;
 let reviewAudioLaneId = null;
@@ -567,6 +568,8 @@ const els = {
   cueDetailChar:          document.getElementById('cue-detail-char'),       // display-only character label
   btnCueStatus:           document.getElementById('btn-cue-status'),        // OPEN/COMPLETED toggle
   btnDeleteCue:           document.getElementById('btn-delete-cue'),
+  btnExportCueMap:        document.getElementById('btn-export-cue-map'),
+  btnExportCueVideo:      document.getElementById('btn-export-cue-video'),
   cueDetailIn:            document.getElementById('cue-detail-in'),
   cueDetailOut:           document.getElementById('cue-detail-out'),
   cueDetailDur:           document.getElementById('cue-detail-dur'),
@@ -582,6 +585,8 @@ const els = {
   btnSyncMode:            document.getElementById('btn-sync-mode'),
   btnCompMode:            document.getElementById('btn-comp-mode'),
   btnSyncEditorClose:     document.getElementById('btn-sync-editor-close'),
+  syncEditorVideo:        document.getElementById('sync-editor-video'),
+  syncEditorPictureTc:    document.getElementById('sync-editor-picture-tc'),
   syncEditorSyncToolbar:  document.getElementById('sync-editor-sync-toolbar'),
   syncEditorCompToolbar:  document.getElementById('sync-editor-comp-toolbar'),
   syncEditorOffset:       document.getElementById('sync-editor-offset'),
@@ -822,7 +827,7 @@ async function refreshAudioEnginePanel(options = {}) {
     if (!status.success || !status.engineExists) {
       els.audioEngineStatus.textContent = status.engineExists ? 'Unavailable' : 'Engine not built';
       els.audioEngineRoutingStatus.textContent = 'Unavailable';
-      setStatusWarn('Native audio engine is not available.');
+      setStatusWarn('Native audio engine is not available. Browser playback remains available.');
       return;
     }
 
@@ -2760,6 +2765,7 @@ function startPlayheadRaf() {
     syncNativeGuidePlayback(t).catch(() => {});
     syncReviewPlayback(t).catch(() => {});
     syncGoodTakesPlayback(t).catch(() => {});
+    syncEditorPictureToTimeline(t, true);
     rafId = requestAnimationFrame(tick);
   }
   rafId = requestAnimationFrame(tick);
@@ -3081,7 +3087,7 @@ async function syncReviewPlayback(timelineSeconds) {
     return;
   }
   const target = getNativeTakeReviewTarget();
-  if (target === 'none') {
+  if (nativeDeviceOpen && target === 'none') {
     stopReviewPlayback();
     return;
   }
@@ -3155,7 +3161,7 @@ async function syncGoodTakesPlayback(timelineSeconds) {
     return;
   }
   const target = getNativeGoodTakeContextTarget();
-  if (target === 'none') {
+  if (nativeDeviceOpen && target === 'none') {
     stopGoodTakesPlayback();
     return;
   }
@@ -4669,7 +4675,11 @@ function renderTakeListGrouped(cueId) {
 async function toggleGoodTake(takeId) {
   if (!selectedCueId || !takeId) return;
   const current = currentProject?.takes?.find(t => t.takeId === takeId);
-  const result = await window.api.cue.selectTake({ cueId: selectedCueId, takeId: current?.isSelected ? null : takeId });
+  const result = await window.api.cue.selectTake({
+    cueId: selectedCueId,
+    takeId,
+    selected: !current?.isSelected,
+  });
   if (!result.success) {
     setStatusError(result.error || 'Could not update good take.');
     return;
@@ -4800,6 +4810,96 @@ function renderSyncEditorRuler(timelineDuration) {
   }).join('');
 }
 
+function syncEditorWaveformMarkup({ filePath, sourceStartSecs = 0, durationSecs = 0 }) {
+  if (!filePath) return '';
+  return `<canvas class="sync-editor-waveform" data-waveform-path="${_escapeHtml(filePath)}" data-waveform-start="${Number(sourceStartSecs) || 0}" data-waveform-duration="${Number(durationSecs) || 0}"></canvas>`;
+}
+
+function drawSyncEditorWaveforms() {
+  if (!syncEditorState) return;
+  const canvases = els.modalSyncEditor?.querySelectorAll('canvas.sync-editor-waveform') || [];
+  for (const canvas of canvases) {
+    const result = syncEditorPeakCache.get(canvas.dataset.waveformPath);
+    if (!result?.success || !Array.isArray(result.peaks?.peaks)) continue;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+    const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, width, height);
+    const peaks = result.peaks.peaks;
+    const sourceDuration = Math.max(0.001, Number(result.peaks.durationSeconds) || 0.001);
+    const startSeconds = Math.max(0, Number(canvas.dataset.waveformStart) || 0);
+    const durationSeconds = Math.max(0.001, Number(canvas.dataset.waveformDuration) || sourceDuration);
+    const startIndex = Math.max(0, Math.min(peaks.length - 1, Math.floor((startSeconds / sourceDuration) * peaks.length)));
+    const endIndex = Math.max(startIndex + 1, Math.min(peaks.length, Math.ceil(((startSeconds + durationSeconds) / sourceDuration) * peaks.length)));
+    const visibleCount = Math.max(1, endIndex - startIndex);
+    const xStep = Math.max(1, Math.round(ratio));
+    ctx.strokeStyle = 'rgba(220, 242, 247, 0.88)';
+    ctx.lineWidth = xStep;
+    ctx.beginPath();
+    for (let x = 0; x < width; x += xStep) {
+      const from = startIndex + Math.floor((x / width) * visibleCount);
+      const to = Math.min(endIndex, startIndex + Math.ceil(((x + xStep) / width) * visibleCount));
+      let peak = 0;
+      for (let index = from; index < Math.max(from + 1, to); index += 1) peak = Math.max(peak, peaks[index] || 0);
+      const amplitude = Math.max(1, peak * height * 0.46);
+      ctx.moveTo(x + 0.5, (height / 2) - amplitude);
+      ctx.lineTo(x + 0.5, (height / 2) + amplitude);
+    }
+    ctx.stroke();
+  }
+}
+
+async function requestSyncEditorWaveforms() {
+  if (!syncEditorState || !window.api.waveform?.takePeaks) return;
+  const paths = [...new Set(Array.from(
+    els.modalSyncEditor?.querySelectorAll('canvas.sync-editor-waveform') || [],
+    canvas => canvas.dataset.waveformPath
+  ).filter(filePath => filePath && !syncEditorPeakCache.has(filePath)))];
+  if (!paths.length) {
+    requestAnimationFrame(drawSyncEditorWaveforms);
+    return;
+  }
+  for (const filePath of paths) syncEditorPeakCache.set(filePath, { loading: true });
+  try {
+    const response = await window.api.waveform.takePeaks({ filePaths: paths, peakBuckets: 1600 });
+    for (const filePath of paths) {
+      syncEditorPeakCache.set(filePath, response.results?.[filePath] || { success: false, error: 'No waveform data.' });
+    }
+    if (syncEditorState) requestAnimationFrame(drawSyncEditorWaveforms);
+  } catch (err) {
+    for (const filePath of paths) syncEditorPeakCache.set(filePath, { success: false, error: err.message });
+  }
+}
+
+function syncEditorPictureToTimeline(timelineSeconds, playing = false) {
+  if (!syncEditorState || !els.syncEditorVideo) return;
+  const time = Math.max(0, Number(timelineSeconds) || 0);
+  if (els.syncEditorPictureTc) els.syncEditorPictureTc.textContent = framesToDisplayTimecode(secondsToFrames(time));
+  if (els.syncEditorVideo.readyState >= 1 && Math.abs((els.syncEditorVideo.currentTime || 0) - time) > 0.08) {
+    els.syncEditorVideo.currentTime = time;
+  }
+  if (playing) {
+    if (els.syncEditorVideo.paused) els.syncEditorVideo.play().catch(() => {});
+  } else if (!els.syncEditorVideo.paused) {
+    els.syncEditorVideo.pause();
+  }
+}
+
+function loadSyncEditorPicture(cue) {
+  if (!els.syncEditorVideo) return;
+  const source = els.videoPlayer.currentSrc || els.videoPlayer.src || '';
+  if (source && els.syncEditorVideo.src !== source) {
+    els.syncEditorVideo.src = source;
+    els.syncEditorVideo.load();
+  }
+  const cueStart = framesToSeconds(cue.inFrames || 0);
+  if (els.syncEditorVideo.readyState >= 1) syncEditorPictureToTimeline(cueStart, false);
+  else els.syncEditorVideo.addEventListener('loadedmetadata', () => syncEditorPictureToTimeline(cueStart, false), { once: true });
+}
+
 function renderSyncEditorMainLane(timelineDuration, take) {
   const activeMain = syncEditorState.activeAudition?.type === 'main';
   els.btnSyncEditorMainSolo.classList.toggle('active', activeMain);
@@ -4810,7 +4910,7 @@ function renderSyncEditorMainLane(timelineDuration, take) {
     const window = getTakeEditWindow(take, track, syncEditorState.syncEdit);
     const start = getTakeTimelineOffsetSecs(take, track, syncEditorState.syncEdit);
     els.syncEditorMainState.textContent = `T${take.takeNumber} / ${track.trackName || track.label || track.laneId}`;
-    els.syncEditorMainLane.innerHTML = `<div class="sync-editor-region" style="${editorRegionGeometry(start, window.durationSecs, timelineDuration)}"><span>T${take.takeNumber} edited take</span></div>`;
+    els.syncEditorMainLane.innerHTML = `<div class="sync-editor-region" style="${editorRegionGeometry(start, window.durationSecs, timelineDuration)}">${syncEditorWaveformMarkup({ filePath: track.filePath, sourceStartSecs: window.trimStartSecs, durationSecs: window.durationSecs })}<span>T${take.takeNumber} edited take</span></div>`;
     return;
   }
 
@@ -4824,7 +4924,8 @@ function renderSyncEditorMainLane(timelineDuration, take) {
   els.syncEditorMainLane.innerHTML = syncEditorState.segments.map(segment => {
     const sourceTake = currentProject.takes.find(item => item.takeId === segment.sourceTakeId);
     const selected = syncEditorState.selectedSegmentId === segment.segmentId ? ' selected' : '';
-    return `<button class="sync-editor-region${selected}" data-editor-action="select-segment" data-segment-id="${_escapeHtml(segment.segmentId)}" style="${editorRegionGeometry(segment.timelineStartSecs, segment.durationSecs, timelineDuration)}"><span>T${sourceTake?.takeNumber || '?'} / ${segment.durationSecs.toFixed(2)}s</span></button>`;
+    const sourceTrack = sourceTake ? getTakeTrackForLane(sourceTake, segment.sourceLaneId || 'mic1') : null;
+    return `<button class="sync-editor-region${selected}" data-editor-action="select-segment" data-segment-id="${_escapeHtml(segment.segmentId)}" style="${editorRegionGeometry(segment.timelineStartSecs, segment.durationSecs, timelineDuration)}">${syncEditorWaveformMarkup({ filePath: sourceTrack?.filePath, sourceStartSecs: segment.sourceStartSecs, durationSecs: segment.durationSecs })}<span>T${sourceTake?.takeNumber || '?'} / ${segment.durationSecs.toFixed(2)}s</span></button>`;
   }).join('');
 }
 
@@ -4856,7 +4957,7 @@ function sourceLaneMarkup({ take, track, timelineDuration, compMode }) {
     <span>${_escapeHtml(laneName)}</span><small>${_escapeHtml(detail)}</small>
   </div>
   <div class="sync-editor-lane sync-editor-source-lane${active ? ' active' : ''}" ${compMode ? `data-comp-source-lane="true" data-take-id="${_escapeHtml(take.takeId)}" data-lane-id="${_escapeHtml(laneId)}"` : ''}>
-    <div class="sync-editor-region sync-editor-source-region" style="${editorRegionGeometry(start, window.durationSecs, timelineDuration)}"><span>${_escapeHtml(track.trackName || track.label || laneId)}</span></div>
+    <div class="sync-editor-region sync-editor-source-region" style="${editorRegionGeometry(start, window.durationSecs, timelineDuration)}">${syncEditorWaveformMarkup({ filePath: track.filePath, sourceStartSecs: window.trimStartSecs, durationSecs: window.durationSecs })}<span>${_escapeHtml(track.trackName || track.label || laneId)}</span></div>
     ${offsetInput}
   </div>`;
 }
@@ -4914,6 +5015,7 @@ function renderSyncEditor() {
   renderSyncEditorRuler(timelineDuration);
   renderSyncEditorMainLane(timelineDuration, take);
   renderSyncEditorSourceLanes(timelineDuration, cue.cueId, take);
+  requestSyncEditorWaveforms();
   updateSyncEditorTransportState();
 }
 
@@ -4947,6 +5049,7 @@ function showSyncEditor(takeId, mode = 'sync') {
   };
   if (!syncEditorState.selectedTakeIds.size) syncEditorState.selectedTakeIds.add(take.takeId);
   els.modalSyncEditor.classList.remove('hidden');
+  loadSyncEditorPicture(cue);
   setSyncEditorStatus('Ready');
   renderSyncEditor();
 }
@@ -4954,6 +5057,11 @@ function showSyncEditor(takeId, mode = 'sync') {
 function hideSyncEditor() {
   if (!syncEditorState) return;
   if (syncEditorPlaybackActive) stopSyncEditorAudition();
+  if (els.syncEditorVideo) {
+    els.syncEditorVideo.pause();
+    els.syncEditorVideo.removeAttribute('src');
+    els.syncEditorVideo.load();
+  }
   stopReviewPlayback();
   syncEditorDrag = null;
   syncEditorState = null;
@@ -5173,7 +5281,7 @@ async function syncEditorReviewPlayback(timelineSeconds) {
     return;
   }
   const target = getNativeTakeReviewTarget();
-  if (target === 'none') {
+  if (nativeDeviceOpen && target === 'none') {
     stopReviewPlayback();
     return;
   }
@@ -5298,6 +5406,7 @@ function stopSyncEditorAudition() {
   if (!syncEditorPlaybackActive && transportState !== 'PREVIEWING') return;
   syncEditorPlaybackActive = false;
   handleTransportStop();
+  syncEditorPictureToTimeline(els.videoPlayer.currentTime || 0, false);
   setSyncEditorStatus('Editor playback stopped.');
   updateSyncEditorTransportState();
 }
@@ -5577,6 +5686,7 @@ function resetCueAndTakeWorkspace() {
   stopReviewPlayback();
   stopGoodTakesPlayback();
   goodTakesPlaybackEnabled = false;
+  syncEditorPeakCache.clear();
   regionInFrames = null;
   regionOutFrames = null;
   regionStreamerTargetFrames = [];
@@ -6491,6 +6601,54 @@ function hideExportResultModal() {
   els.modalExportResult?.classList.add('hidden');
 }
 
+async function exportCueMap(cueIds = null) {
+  if (!currentProject) return;
+  const result = await window.api.export.cueMap({ cueIds });
+  if (!result.success) {
+    result.error !== 'Export cancelled.' ? setStatusError(result.error) : setStatusInfo('Export cancelled.');
+    return;
+  }
+  setStatusOk(`Exported ${result.cueCount} cue${result.cueCount === 1 ? '' : 's'}: ${result.filePath}`);
+}
+
+async function exportSelectedCueMap() {
+  if (!selectedCueId) {
+    setStatusWarn('Select a cue first.');
+    return;
+  }
+  await exportCueMap([selectedCueId]);
+}
+
+async function exportSelectedCueVideo() {
+  if (!selectedCueId) {
+    setStatusWarn('Select a cue first.');
+    return;
+  }
+  setStatusInfo('Rendering selected cue video...');
+  const result = await window.api.export.cueVideo({ cueId: selectedCueId });
+  if (!result.success) {
+    result.error !== 'Export cancelled.' ? setStatusError(result.error) : setStatusInfo('Export cancelled.');
+    return;
+  }
+  setStatusOk(`Exported ${result.cueNumber || 'cue'} video: ${result.filePath}`);
+}
+
+async function importCueMapFile() {
+  if (!currentProject) {
+    setStatusWarn('Open or create a project first.');
+    return;
+  }
+  const result = await window.api.project.importCueMap();
+  if (!result.success) {
+    result.error !== 'Import cancelled.' ? setStatusError(result.error) : setStatusInfo('Import cancelled.');
+    return;
+  }
+  applyProjectToUI(result.project, currentFilePath);
+  markUnsaved();
+  const skipped = result.skippedCount ? `, ${result.skippedCount} duplicate${result.skippedCount === 1 ? '' : 's'} skipped` : '';
+  setStatusOk(`Imported ${result.importedCount} cue${result.importedCount === 1 ? '' : 's'}${skipped}.`);
+}
+
 async function submitExportGoodTakesPackage() {
   return submitExportGoodTakesPackageForCharacter(null);
 }
@@ -7057,6 +7215,8 @@ els.btnCueStatus.addEventListener('click', toggleCueStatus);
 // Cue detail
 els.btnSaveCue.addEventListener('click',   saveCueEdits);
 els.btnDeleteCue.addEventListener('click', deleteCue);
+els.btnExportCueMap?.addEventListener('click', exportSelectedCueMap);
+els.btnExportCueVideo?.addEventListener('click', exportSelectedCueVideo);
 
 function resetTimecodeInput(input, value) {
   setControlText(input, value);
@@ -8563,6 +8723,7 @@ window.api.onMenu.saveProject(  () => els.btnSaveProject.click());
 window.api.onMenu.saveProjectAs(() => saveProjectAs());
 window.api.onMenu.loadVideo(    () => els.btnLoadVideo.click());
 window.api.onMenu.relinkFiles?.(() => relinkProjectFilesFromFolder());
+window.api.onMenu.importCueMap?.(() => importCueMapFile());
 window.api.onMenu.manageActors?.(() => {
   if (currentProject) showActorModal();
 });
@@ -8573,6 +8734,9 @@ window.api.onMenu.exportRemoteCueManifest?.(() => submitExportRemoteCueManifest(
 window.api.onMenu.exportReport( () => submitExportReport());
 window.api.onMenu.exportCsv(    () => submitExportCsv());
 window.api.onMenu.exportPdf(    () => showExportModal());
+window.api.onMenu.exportCueMap?.(() => exportCueMap());
+window.api.onMenu.exportSelectedCueMap?.(() => exportSelectedCueMap());
+window.api.onMenu.exportCueVideo?.(() => exportSelectedCueVideo());
 window.api.onMenu.returnToStartOnStop((checked) => {
   ws.returnToStartOnStop = !!checked;
   saveWorkspaceSettings();
@@ -8588,6 +8752,7 @@ window.api.onMenu.showSessionSettings?.(() => showPreferencePanel('session'));
 window.api.onMenu.showKeyboardShortcuts?.(() => showKeyboardShortcutsModal());
 
 window.api.onWaveform.progress(({ stage, percent }) => { updateWaveformProgress(stage, percent); });
+window.addEventListener('resize', () => requestAnimationFrame(drawSyncEditorWaveforms));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STARTUP

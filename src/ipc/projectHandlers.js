@@ -30,6 +30,7 @@ const autosave = require('../services/persistence/autosave');
 const recentProjects = require('../services/persistence/recentProjects');
 const { relinkProjectFiles } = require('../services/media/relinkProjectFiles');
 const { isValidTimecode } = require('../core/timecode');
+const { importCueMap } = require('../services/export/cueMap');
 
 // ── Module init ───────────────────────────────────────────────────────────────
 
@@ -133,6 +134,29 @@ function register(ipcMain, getWindow, onRecentProjectsChanged = () => {}) {
       changed: relink.changed,
       ...relink.summary,
     };
+  });
+
+  ipcMain.handle('project:importCueMap', async () => {
+    if (!_project) return { success: false, error: 'No project is open.' };
+    const win = getWindow();
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Import Cue Map',
+      defaultPath: _project.settings?.projectFolders?.exportsPath || app.getPath('documents'),
+      filters: [{ name: 'Post ADR Pro Cue Map', extensions: ['json'] }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths?.[0]) {
+      return { success: false, error: 'Import cancelled.' };
+    }
+
+    try {
+      const cueMap = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+      const imported = importCueMap(_project, cueMap);
+      _project = imported.project;
+      return { success: true, project: _project, filePath: result.filePaths[0], ...imported.summary };
+    } catch (err) {
+      return { success: false, error: `Cue map import failed: ${err.message}` };
+    }
   });
 
   // ── New Project ─────────────────────────────────────────────────────────────

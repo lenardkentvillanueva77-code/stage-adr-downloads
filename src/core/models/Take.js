@@ -57,7 +57,7 @@ function createTake({
     recordedAt:      now,
     createdAt:       now,
     updatedAt:       now,
-    isSelected:      false,   // Good Take — enforced by projectState.selectTake()
+    isSelected:      false,   // Good Take — multiple takes may be selected for export
     rating:          'none',  // 'none' | 'circle' | 'reject'
     syncStatus:      'local', // future cloud sync field
     sourceType:      'recorded',

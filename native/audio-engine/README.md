@@ -1,6 +1,6 @@
 # Post ADR Pro Native Audio Engine
 
-Status: Milestone 1 scaffold  
+Status: Release engine packaged with the Electron app
 Purpose: Standalone JUCE process for professional 3-input / 4-output ADR routing
 
 This engine is intentionally separate from Electron. Electron owns UI and project orchestration; this process owns professional audio device access and real-time routing.
@@ -66,6 +66,12 @@ On this machine, the working path is the Visual Studio developer environment wit
 cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && "C:\Program Files\CMake\bin\cmake.exe" -S native\audio-engine -B native\audio-engine\build-nmake2 -G "NMake Makefiles"'
 cmd.exe /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && "C:\Program Files\CMake\bin\cmake.exe" --build native\audio-engine\build-nmake2'
 native\audio-engine\build-nmake2\PostAdrAudioEngine_artefacts\Debug\PostAdrAudioEngine.exe
+```
+
+Release packaging uses a Release build copied to:
+
+```text
+native/audio-engine/bin/PostAdrAudioEngine.exe
 ```
 
 The executable currently emits:

@@ -564,6 +564,8 @@
             </select>
           </div>
           <div class="cue-detail-row cue-detail-actions">
+            <button class="btn btn-sm btn-ghost" id="btn-export-cue-map">Export Cue Map</button>
+            <button class="btn btn-sm btn-ghost" id="btn-export-cue-video">Export Video</button>
             <button class="btn btn-sm btn-primary" id="btn-save-cue">Save Changes</button>
           </div>
 
@@ -836,6 +838,10 @@
       </div>
 
       <div class="sync-editor-body">
+        <div class="sync-editor-picture">
+          <video id="sync-editor-video" muted playsinline aria-label="Cue video preview"></video>
+          <span class="sync-editor-picture-tc field-mono" id="sync-editor-picture-tc">00:00:00:00</span>
+        </div>
         <div class="sync-editor-toolbar" id="sync-editor-sync-toolbar">
           <label class="sync-editor-field">
             <span>Take offset</span>

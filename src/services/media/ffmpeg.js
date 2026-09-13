@@ -129,7 +129,7 @@ function readSample(buffer, offset, bitsPerSample) {
   return buffer.readInt32LE(offset) / 2147483648;
 }
 
-function generateWaveformPeaks({ wavPath, onProgress }) {
+function generateWaveformPeaks({ wavPath, onProgress, peakBuckets = PEAK_BUCKETS }) {
   try {
     if (!wavPath || !fs.existsSync(wavPath)) {
       return { success: false, error: 'Guide audio WAV not found.' };
@@ -139,7 +139,8 @@ function generateWaveformPeaks({ wavPath, onProgress }) {
     const bytesPerSample = info.bitsPerSample / 8;
     const frameBytes = bytesPerSample * info.channels;
     const totalFrames = Math.floor(info.dataSize / frameBytes);
-    const peakCount = Math.max(1, Math.min(PEAK_BUCKETS, totalFrames));
+    const requestedBuckets = Math.max(1, Math.min(PEAK_BUCKETS, Math.round(Number(peakBuckets) || PEAK_BUCKETS)));
+    const peakCount = Math.max(1, Math.min(requestedBuckets, totalFrames));
     const framesPerPeak = Math.max(1, Math.ceil(totalFrames / peakCount));
     const peaks = [];
     const fd = fs.openSync(wavPath, 'r');
@@ -215,6 +216,7 @@ function readPeaksFile(peaksPath) {
 }
 
 module.exports = {
+  resolveFfmpegPath,
   getMediaFolder,
   ensureMediaFolder,
   extractGuideAudio,

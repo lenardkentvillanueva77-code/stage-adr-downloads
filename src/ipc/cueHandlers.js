@@ -343,12 +343,18 @@ function register(ipcMain, _getWindow, projectHandlerExports) {
     return { success: true, project };
   });
 
-  ipcMain.handle('cue:selectTake', async (_event, { cueId, takeId }) => {
+  ipcMain.handle('cue:selectTake', async (_event, { cueId, takeId, selected }) => {
     let project = getProject();
     if (!project) return { success: false, error: 'No project is open.' };
     if (!cueId)   return { success: false, error: 'cueId is required.' };
 
-    const { selectTake, deselectAllTakes } = require('../core/projectState');
+    const { selectTake, deselectAllTakes, setTakeSelected } = require('../core/projectState');
+    if (takeId && typeof selected === 'boolean') {
+      const result = setTakeSelected(project, cueId, takeId, selected);
+      if (result.error) return { success: false, error: result.error };
+      projectHandlerExports._setProject(result.project);
+      return { success: true, project: result.project };
+    }
     if (!takeId) {
       project = deselectAllTakes(project, cueId);
       projectHandlerExports._setProject(project);

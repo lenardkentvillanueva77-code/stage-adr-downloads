@@ -354,6 +354,29 @@ function selectTake(project, cueId, takeId) {
 }
 
 /**
+ * Mark or unmark one good take without changing the other takes for the cue.
+ * Good-take export is intentionally a multi-selection workflow.
+ */
+function setTakeSelected(project, cueId, takeId, selected) {
+  const take = project.takes.find((item) => item.takeId === takeId && item.cueId === cueId);
+  if (!take) return { project, error: `Take ${takeId} not found for cue ${cueId}.` };
+  if (selected && take.rating === 'reject') {
+    return { project, error: 'Cannot select a rejected take.' };
+  }
+
+  const next = deepClone(project);
+  next.takes = next.takes.map((item) => item.takeId === takeId
+    ? { ...item, isSelected: !!selected }
+    : item);
+  if (selected) {
+    next.cues = next.cues.map((cue) => cue.cueId === cueId && cue.status === 'open'
+      ? { ...cue, status: 'recorded', updatedAt: nowISO() }
+      : cue);
+  }
+  return { project: touchProject(next) };
+}
+
+/**
  * Deselect all takes for a cue.
  * @param {object} project
  * @param {string} cueId
@@ -460,6 +483,7 @@ module.exports = {
   addTake,
   updateTake,
   selectTake,
+  setTakeSelected,
   deselectAllTakes,
   rateTake,
   removeTake,

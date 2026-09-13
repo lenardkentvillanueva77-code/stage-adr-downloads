@@ -14,7 +14,7 @@
 ## Product goals
 - Goals: Make ADR spotting, recording, sync correction, take comparison, comp creation, and transferred-station relinking usable in one desktop workflow.
 - Non-goals: Reproduce a full DAW, replace detailed mix automation, or add destructive source-file editing.
-- Success signals: Operators can correct a take without leaving the app, A/B sources quickly, audition unsaved editor changes against picture, create a clearly marked comp take, relink moved media from one folder, enter production timecode directly for cue/scrub work, and recover all edits from the project file.
+- Success signals: Operators can correct a take without leaving the app, A/B sources quickly, audition unsaved editor changes against visible picture and real waveforms, create a clearly marked comp take, relink moved media from one folder, enter production timecode directly for cue/scrub work, export exact cue video ranges, move cue maps without audio, and export multiple marked good takes across repeated review passes.
 
 ## Personas and jobs
 - Primary personas: ADR recordists, dialogue editors, supervising sound editors, and small post-production teams.
@@ -42,7 +42,7 @@
 
 ## Components
 - Existing components to reuse: Buttons, segmented controls, modal overlay, take groups, lane monitor states, status bar, menu actions, and timing inputs.
-- New/changed components: Full-width Sync/Comp Editor, mode tabs, editor ruler, main lane, source lane, region block, range handles, source checklist, editor audition transport, created-take marker, editable scrub timecode, editable region/cue In/Out timecodes, session Start TC field, File > Relink Files action, and booth previous/current/next streamer dialogue with configurable screen-space travel bounds.
+- New/changed components: Full-width Sync/Comp Editor, picture monitor, real take waveforms, mode tabs, editor ruler, main lane, source lane, region block, range handles, source checklist, editor audition transport, created-take marker, editable scrub timecode, editable region/cue In/Out timecodes, session Start TC field, cue-map import/export, selected-cue video export, File > Relink Files action, and booth previous/current/next streamer dialogue with configurable screen-space travel bounds.
 - Variants and states: Sync/Comp mode, audible/muted source, selected/unselected source, editor audition playing/stopped, saved/dirty editor, recorded/created take, relinked/missing/conflicting file references, empty comp lane, configurable streamer travel bounds, invalid range, invalid timecode, and project-start timecode offset.
 - Token/component ownership: Reuse `renderer/styles.css` root tokens and keep editor-specific rules under one Sync/Comp Editor section.
 

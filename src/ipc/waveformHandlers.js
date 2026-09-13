@@ -80,6 +80,15 @@ function register(ipcMain, getWindow) {
     };
   });
 
+  ipcMain.handle('waveform:takePeaks', async (_event, { filePaths, peakBuckets = 1200 } = {}) => {
+    const uniquePaths = [...new Set((Array.isArray(filePaths) ? filePaths : []).filter(Boolean))];
+    const results = {};
+    for (const filePath of uniquePaths.slice(0, 64)) {
+      results[filePath] = generateWaveformPeaks({ wavPath: filePath, peakBuckets });
+    }
+    return { success: true, results };
+  });
+
   // ── Extract guide audio and generate waveform peaks ─────────────────────────
   // Long-running. Sends waveform:progress events to renderer during processing.
   // Returns the final peaks data on completion.
